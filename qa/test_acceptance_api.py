@@ -49,6 +49,34 @@ def test_A04_malformed_file_preserves_state(client):
     assert client.get("/api/data/status").json() == before
 
 
+def test_mixed_valid_invalid_stock_upload_is_atomic(client):
+    from app import main
+
+    before = main.state.datasets['stock'].copy(deep=True)
+    csv = b'sku,warehouse,current_stock\nQA-001,ASTANA,25\nQA-001,ALMATY,-7\n'
+    response = client.post('/api/data/upload/stock', files={'file': ('stock.csv', csv, 'text/csv')})
+    assert response.status_code == 422, response.text
+    pd.testing.assert_frame_equal(main.state.datasets['stock'], before, check_dtype=False)
+
+
+def test_editor_exports_keep_untrusted_text_as_text(client):
+    from app import main
+
+    formula = '=HYPERLINK("https://example.invalid", "click")'
+    main.state.datasets['products'].at[0, 'product_name'] = formula
+    xlsx = client.get('/api/editor/products/export?format=xlsx')
+    assert xlsx.status_code == 200
+    sheet = load_workbook(BytesIO(xlsx.content), read_only=True).active
+    name_column = list(next(sheet.values)).index('product_name') + 1
+    cell = sheet.cell(row=2, column=name_column)
+    assert cell.data_type == 's'
+    assert cell.value == "'" + formula
+
+    csv = client.get('/api/editor/products/export?format=csv')
+    assert csv.status_code == 200
+    assert pd.read_csv(BytesIO(csv.content)).loc[0, 'product_name'] == "'" + formula
+
+
 def test_A05_unknown_dataset_returns_404(client):
     assert client.post("/api/data/upload/unknown", files={"file": ("x.csv", b"sku\nx\n")}).status_code == 404
 

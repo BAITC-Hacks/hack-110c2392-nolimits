@@ -77,3 +77,16 @@ def test_purchase_reduces_recommendation_before_receipt(api_factory):
         assert after['recommended_quantity'] < before['recommended_quantity']
         assert balance(client, 'QA-001', 'ASTANA')['current_stock'] == 0
         assert balance(client, 'QA-001', 'ASTANA')['in_transit'] == 1000
+
+
+def test_reused_request_id_with_changed_cart_is_rejected(api_factory):
+    with api_factory() as client:
+        first = operation('PURCHASE', [line('IDEMPOTENT', 2)], request_id='same-id',
+                          partner='SUP-1', arrival='2026-10-01')
+        assert client.post('/api/inventory/movements', json=first).status_code == 200
+        changed = operation('PURCHASE', [line('IDEMPOTENT', 9)], request_id='same-id',
+                            partner='SUP-1', arrival='2026-10-01')
+        response = client.post('/api/inventory/movements', json=changed)
+        assert response.status_code == 409, response.text
+        assert balance(client, 'IDEMPOTENT', 'ASTANA')['in_transit'] == 2
+        assert len(client.get('/api/inventory/movements').json()['movements']) == 1

@@ -40,6 +40,11 @@ EDITOR_DATASETS = ('products', 'sales', 'stock', 'transit', 'stockouts', 'suppli
 DATA_DIR = Path(__file__).resolve().parents[1] / 'data'
 
 
+def _spreadsheet_safe(value):
+    """Keep untrusted text from becoming a formula in Excel or CSV viewers."""
+    return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
+
+
 def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
     columns = ['sku', 'product_name', 'category', 'unit_price', 'active']
     if sales.empty:
@@ -144,6 +149,8 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
     # Tables may be uploaded in any order; the current demo's warehouses are
     # not authoritative for a new import session.
     cleaned, errors, warnings = validate_table(dataset, frame, known_skus=known_skus)
+    if errors:
+        raise HTTPException(status_code=422, detail={'errors': errors, 'warnings': warnings})
     if len(cleaned) or (frame.empty and not errors):
         state.datasets[dataset] = cleaned
         state.datasets = ensure_product_catalog(state.datasets)
@@ -254,11 +261,13 @@ def inventory_movements(limit: int = 100) -> dict:
 def create_inventory_movement(request: MovementRequest) -> dict:
     operation = request.model_dump(mode='json')
     movement_id = operation.pop('client_request_id') or str(uuid4())
+    operation['id'] = movement_id
     with inventory_lock:
         existing = read_inventory_movement(movement_id)
         if existing:
+            if existing != operation:
+                raise HTTPException(status_code=409, detail='Этот ID операции уже использован для другого документа')
             return {'movement': existing, 'recommendations': len(state.recommendations), 'replayed': True}
-        operation['id'] = movement_id
         try:
             candidate = apply_movement(state.datasets, operation)
             recommendations, outliers = calculate_recommendations(candidate)
@@ -275,19 +284,17 @@ def create_inventory_movement(request: MovementRequest) -> dict:
 @app.get('/api/inventory/export')
 def export_inventory() -> StreamingResponse:
     buffer = io.BytesIO()
-    def spreadsheet_safe(value):
-        return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         for name in EDITOR_DATASETS:
             frame = state.datasets[name].copy()
-            frame = frame.map(spreadsheet_safe)
+            frame = frame.map(_spreadsheet_safe)
             frame.to_excel(writer, index=False, sheet_name=name)
         movements = read_inventory_movements(None)
         pd.DataFrame([{'id': item['id'], 'type': item['kind'], 'date': item['date'],
                        'warehouse': item['warehouse'], 'destination': item.get('destination_warehouse'),
                        'partner': item.get('partner'), 'reference': item.get('reference'),
                        'sku': line['sku'], 'quantity': line['quantity'], 'unit_price': line['unit_price']}
-                      for item in movements for line in item['lines']]).map(spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
+                      for item in movements for line in item['lines']]).map(_spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
     buffer.seek(0)
     return StreamingResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                              headers={'Content-Disposition': 'attachment; filename=stockpilot-current.xlsx'})
@@ -375,7 +382,7 @@ def export_editor_dataset(dataset: str, format: str = 'xlsx') -> StreamingRespon
     normalized_format = format.lower()
     if normalized_format not in {'csv', 'xlsx'}:
         raise HTTPException(status_code=400, detail="Export format must be 'csv' or 'xlsx'")
-    frame = state.datasets[dataset]
+    frame = state.datasets[dataset].map(_spreadsheet_safe)
     filename = f'stockpilot-{dataset}'
     if normalized_format == 'xlsx':
         buffer = io.BytesIO()
@@ -548,11 +555,7 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
         'Explanation': 'explanation',
         'Status': 'status'
     }
-    def spreadsheet_safe(value):
-        if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')):
-            return "'" + value
-        return value
-    frame = pd.DataFrame([{label: spreadsheet_safe(row.get(key)) for label, key in columns.items()} for row in state.recommendations])
+    frame = pd.DataFrame([{label: _spreadsheet_safe(row.get(key)) for label, key in columns.items()} for row in state.recommendations])
     if normalized_format == 'xlsx':
         buffer = io.BytesIO()
         frame.to_excel(buffer, index=False)
