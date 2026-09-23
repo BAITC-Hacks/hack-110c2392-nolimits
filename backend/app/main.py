@@ -311,7 +311,10 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
 
 
 def _summary(rows: list[dict]) -> dict:
+    sales_dates = pd.to_datetime(state.datasets['sales'].get('date', pd.Series(dtype='datetime64[ns]')), errors='coerce')
+    data_as_of = sales_dates.max().strftime('%Y-%m-%d') if not sales_dates.empty and pd.notna(sales_dates.max()) else None
     return {
+        'data_as_of': data_as_of,
         'skus_requiring_replenishment': sum(item['final_quantity'] > 0 for item in rows),
         'critical_risks': sum(item['urgency'] == 'CRITICAL' for item in rows),
         'total_recommended_units': round(sum(item['final_quantity'] for item in rows), 1),

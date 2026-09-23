@@ -77,6 +77,9 @@ def test_workbook_upload_returns_sheet_validation_report():
     with pd.ExcelWriter(workbook, engine='openpyxl') as writer:
         pd.DataFrame({'sku': ['BROKEN-1']}).to_excel(writer, index=False, sheet_name='sales')
     with TestClient(app) as client:
+        before = client.get('/api/data/status').json()
         response = client.post('/api/data/upload-workbook', files={'file': ('broken.xlsx', workbook.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')})
-    assert response.status_code == 200
-    assert any('sales:' in error and 'missing required' in error for error in response.json()['errors'])
+        after = client.get('/api/data/status').json()
+    assert response.status_code == 422
+    assert any('sales:' in error and 'missing required' in error for error in response.json()['detail']['errors'])
+    assert after == before

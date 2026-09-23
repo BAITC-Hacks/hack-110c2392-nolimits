@@ -55,15 +55,18 @@ def prepare_demand(data: dict[str, pd.DataFrame], warehouse: str | None = None, 
     keys = ['sku', 'warehouse', 'date', 'customer_id']
     client_day = sales.groupby(keys, dropna=False)['quantity'].sum().reset_index()
     client_day['is_outlier'] = False
+    client_day['typical_quantity'] = 0.0
     for _, indices in client_day.groupby(['sku', 'warehouse']).groups.items():
         flagged = mad_outliers(client_day.loc[indices, 'quantity'], outlier_threshold)
         client_day.loc[indices[flagged.to_numpy()], 'is_outlier'] = True
+        normal = client_day.loc[indices[~flagged.to_numpy()], 'quantity']
+        client_day.loc[indices, 'typical_quantity'] = float(normal.median()) if len(normal) else 0.0
     sales = sales.merge(client_day[keys + ['is_outlier']], on=keys, how='left', validate='many_to_one')
     sales.loc[sales['is_outlier'], 'adjusted_quantity'] = 0.0
     outlier_rows = [{
         'date': item.date.strftime('%Y-%m-%d'), 'sku': item.sku, 'warehouse': item.warehouse,
         'customer_id': item.customer_id, 'quantity': round(float(item.quantity), 2),
-        'typical_quantity': 0.0,
+        'typical_quantity': round(float(item.typical_quantity), 2),
         'reason': 'Client/day total exceeds robust MAD threshold; possible one-off order', 'used_in_forecast': False,
     } for item in client_day.loc[client_day['is_outlier']].itertuples()]
     daily = sales.groupby(['sku', 'warehouse', 'date'], as_index=False).agg(
@@ -134,8 +137,11 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
             arrivals = pd.to_datetime(transit_rows['expected_arrival_date'], errors='coerce')
             due = group['date'].max() + pd.Timedelta(days=lead)
             incoming = _number(transit_rows.loc[arrivals <= due, 'quantity_in_transit'].sum())
+            arrivals_in_horizon = arrivals[arrivals <= due]
+            first_arrival_days = max(0, (arrivals_in_horizon.min() - group['date'].max()).days) if not arrivals_in_horizon.empty else lead
         else:
             incoming = 0
+            first_arrival_days = lead
         inventory_position = current + incoming
         raw_order = max(0.0, forecast_lead + safety - inventory_position)
         moq = max(0.0, _number(supplier.get('moq', 0)))
@@ -150,8 +156,8 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         if recommended > 0:
             recommended = np.ceil((recommended - 1e-9) / package) * package
         avg = max(details['average_daily_demand'], 0.01)
-        days_cover = inventory_position / avg
-        if days_cover < lead and raw_order > 0:
+        days_cover = current / avg
+        if forecast_lead > 0 and days_cover < min(lead, first_arrival_days):
             urgency = 'CRITICAL'
         elif raw_order > 0 and inventory_position < forecast_lead + safety:
             urgency = 'HIGH'

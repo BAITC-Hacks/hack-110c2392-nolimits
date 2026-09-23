@@ -31,6 +31,15 @@ def test_stress_return_reconciliation_and_dropship_exclusion():
     assert actual.loc[base.iloc[72]['date']] == 10  # direct-to-customer shipment
 
 
+def test_inbound_does_not_hide_stockout_before_its_arrival():
+    data = make_data(stock=0, transit=100)
+    data['transit'].loc[0, 'expected_arrival_date'] = data['sales']['date'].max() + pd.Timedelta(days=9)
+    row = calculate(data)
+    assert row['recommended_quantity'] == 0
+    assert row['days_of_cover'] == 0
+    assert row['urgency'] == 'CRITICAL'
+
+
 def calculate(data, **kwargs):
     settings = {"service_factor": 0, "safety_days": 0, **kwargs}
     return calculate_recommendations(data, **settings)[0][0]
@@ -148,6 +157,7 @@ def test_E14_one_off_4800_does_not_inflate_regular_forecast():
     data["sales"].loc[70, ["quantity", "customer_id"]] = [4800, "PROJECT-CLIENT"]
     rows, audit = calculate_recommendations(data, service_factor=0, safety_days=0)
     assert any(item["customer_id"] == "PROJECT-CLIENT" for item in audit)
+    assert next(item for item in audit if item["customer_id"] == "PROJECT-CLIENT")["typical_quantity"] > 0
     assert rows[0]["forecast_lead_time"] == pytest.approx(100, rel=0.05)
     assert data["sales"].loc[70, "quantity"] == 4800
 

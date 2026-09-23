@@ -3,7 +3,15 @@ import type { Point, Recommendation, Summary } from './types'
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, init)
-  if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.detail || 'Request failed') }
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    const detail = body.detail
+    const message = typeof detail === 'string' ? detail
+      : Array.isArray(detail?.errors) ? detail.errors.join(' · ')
+      : Array.isArray(detail) ? detail.map(item => item.msg || String(item)).join(' · ')
+      : 'Request failed'
+    throw new Error(message)
+  }
   return response.json()
 }
 

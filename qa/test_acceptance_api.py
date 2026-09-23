@@ -19,8 +19,12 @@ def path(row, action):
 
 
 def test_A01_health_and_startup(client):
+    from app import main
+
     assert client.get("/health").status_code == 200
     assert first_order(client)["status"] == "DRAFT"
+    as_of = main.state.datasets['sales']['date'].max().strftime('%Y-%m-%d')
+    assert client.get('/api/recommendations').json()['summary']['data_as_of'] == as_of
 
 
 @pytest.mark.parametrize("payload", [
