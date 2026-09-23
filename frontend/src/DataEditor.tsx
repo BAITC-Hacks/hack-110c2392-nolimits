@@ -11,28 +11,29 @@ import {
   type EditorDataset,
   type EditorRow,
 } from './api'
+import { useI18n } from './i18n'
 
 type FieldType = 'text' | 'number' | 'date' | 'checkbox'
-type Field = { key: string; label: string; type?: FieldType; required?: boolean }
+type Field = { key: string; labelKey: string; type?: FieldType; required?: boolean }
 
 const DATASETS: Array<{ key: EditorDataset; label: string; description: string; fields: Field[] }> = [
-  { key: 'products', label: 'Товары', description: 'Справочник SKU для продаж и поставок', fields: [
-    { key: 'sku', label: 'SKU', required: true }, { key: 'product_name', label: 'Название товара', required: true }, { key: 'category', label: 'Категория', required: true }, { key: 'unit_price', label: 'Цена', type: 'number' }, { key: 'active', label: 'Активен', type: 'checkbox' },
+  { key: 'products', label: 'products', description: 'productsDescription', fields: [
+    { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'product_name', labelKey: 'productName', required: true }, { key: 'category', labelKey: 'category', required: true }, { key: 'unit_price', labelKey: 'price', type: 'number' }, { key: 'active', labelKey: 'active', type: 'checkbox' },
   ] },
-  { key: 'sales', label: 'Продажи', description: 'Фактические продажи по дням', fields: [
-    { key: 'date', label: 'Дата', type: 'date', required: true }, { key: 'sku', label: 'SKU', required: true }, { key: 'product_name', label: 'Название товара', required: true }, { key: 'quantity', label: 'Количество', type: 'number', required: true }, { key: 'price', label: 'Цена', type: 'number', required: true }, { key: 'customer_id', label: 'Клиент', required: true }, { key: 'warehouse', label: 'Склад', required: true }, { key: 'category', label: 'Категория', required: true },
+  { key: 'sales', label: 'sales', description: 'salesDescription', fields: [
+    { key: 'date', labelKey: 'date', type: 'date', required: true }, { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'product_name', labelKey: 'productName', required: true }, { key: 'quantity', labelKey: 'quantity', type: 'number', required: true }, { key: 'price', labelKey: 'price', type: 'number', required: true }, { key: 'customer_id', labelKey: 'customerId', required: true }, { key: 'warehouse', labelKey: 'warehouse', required: true }, { key: 'category', labelKey: 'category', required: true },
   ] },
-  { key: 'stock', label: 'Остатки', description: 'Текущий запас по складам', fields: [
-    { key: 'sku', label: 'SKU', required: true }, { key: 'warehouse', label: 'Склад', required: true }, { key: 'current_stock', label: 'Остаток', type: 'number', required: true },
+  { key: 'stock', label: 'stock', description: 'stockDescription', fields: [
+    { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'warehouse', labelKey: 'warehouse', required: true }, { key: 'current_stock', labelKey: 'currentStock', type: 'number', required: true },
   ] },
-  { key: 'transit', label: 'В пути', description: 'Ожидаемые поставки', fields: [
-    { key: 'sku', label: 'SKU', required: true }, { key: 'warehouse', label: 'Склад', required: true }, { key: 'quantity_in_transit', label: 'Количество', type: 'number', required: true }, { key: 'expected_arrival_date', label: 'Дата поставки', type: 'date', required: true },
+  { key: 'transit', label: 'transit', description: 'transitDescription', fields: [
+    { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'warehouse', labelKey: 'warehouse', required: true }, { key: 'quantity_in_transit', labelKey: 'quantity', type: 'number', required: true }, { key: 'expected_arrival_date', labelKey: 'arrivalDate', type: 'date', required: true },
   ] },
-  { key: 'stockouts', label: 'Дефициты', description: 'Периоды нулевого остатка', fields: [
-    { key: 'sku', label: 'SKU', required: true }, { key: 'warehouse', label: 'Склад', required: true }, { key: 'start_date', label: 'Начало', type: 'date', required: true }, { key: 'end_date', label: 'Конец', type: 'date', required: true },
+  { key: 'stockouts', label: 'stockouts', description: 'stockoutsDescription', fields: [
+    { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'warehouse', labelKey: 'warehouse', required: true }, { key: 'start_date', labelKey: 'start', type: 'date', required: true }, { key: 'end_date', labelKey: 'end', type: 'date', required: true },
   ] },
-  { key: 'suppliers', label: 'Поставщики', description: 'Lead time, MOQ и упаковка', fields: [
-    { key: 'supplier_id', label: 'ID поставщика', required: true }, { key: 'supplier_name', label: 'Поставщик', required: true }, { key: 'sku', label: 'SKU', required: true }, { key: 'lead_time_days', label: 'Lead time, дней', type: 'number', required: true }, { key: 'moq', label: 'MOQ', type: 'number' }, { key: 'package_size', label: 'Упаковка', type: 'number' }, { key: 'unit_cost', label: 'Цена закупки', type: 'number' }, { key: 'minimum_order_value', label: 'Мин. сумма заказа', type: 'number' },
+  { key: 'suppliers', label: 'suppliers', description: 'suppliersDescription', fields: [
+    { key: 'supplier_id', labelKey: 'supplierId', required: true }, { key: 'supplier_name', labelKey: 'supplierName', required: true }, { key: 'sku', labelKey: 'skuProduct', required: true }, { key: 'lead_time_days', labelKey: 'leadTimeDays', type: 'number', required: true }, { key: 'moq', labelKey: 'moq', type: 'number' }, { key: 'package_size', labelKey: 'packageSize', type: 'number' }, { key: 'unit_cost', labelKey: 'purchasePrice', type: 'number' }, { key: 'minimum_order_value', labelKey: 'minimumOrderValue', type: 'number' },
   ] },
 ]
 
@@ -44,13 +45,14 @@ function defaultsFor(dataset: EditorDataset): Record<string, unknown> {
   return Object.fromEntries(configFor(dataset).fields.map(field => [field.key, defaults[field.key] ?? '']))
 }
 
-function displayValue(value: unknown): string {
+function displayValue(value: unknown, yes: string, no: string): string {
   if (value === null || value === undefined) return '—'
-  if (typeof value === 'boolean') return value ? 'Да' : 'Нет'
+  if (typeof value === 'boolean') return value ? yes : no
   return String(value).replace('T00:00:00.000Z', '')
 }
 
 export default function DataEditor({ onToast, onRefresh }: { onToast: (message: string) => void; onRefresh: () => void }) {
+  const { t } = useI18n()
   const [dataset, setDataset] = useState<EditorDataset>('products')
   const [rows, setRows] = useState<EditorRow[]>([])
   const [total, setTotal] = useState(0)
@@ -70,7 +72,7 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
       setRows(response.rows)
       setTotal(response.total)
     } catch (error) {
-      onToast(error instanceof Error ? error.message : 'Не удалось загрузить данные')
+      onToast(error instanceof Error ? error.message : t('couldNotLoad'))
     }
   }
 
@@ -89,7 +91,7 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
         warehouse: [...new Set(stock.rows.map(row => String(row.warehouse || '')).filter(Boolean))],
         supplier_id: [...new Set(suppliers.rows.map(row => String(row.supplier_id || '')).filter(Boolean))],
       })
-    }).catch(() => onToast('Черновик пока недоступен'))
+    }).catch(() => onToast(t('draftUnavailable')))
   }, [])
 
   useEffect(() => {
@@ -119,22 +121,22 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
     try {
       const response = editingId === null ? await createEditorRow(dataset, form) : await updateEditorRow(dataset, editingId, form)
       await clearEditorDraft(); setDirty(false); setRestored(false); setEditingId(null); setForm(defaultsFor(dataset)); await loadRows(); onRefresh()
-      onToast(response.warnings?.length ? response.warnings.join(' · ') : 'Изменения сохранены, рекомендации пересчитаны')
-    } catch (error) { onToast(error instanceof Error ? error.message : 'Не удалось сохранить строку') } finally { setBusy(false) }
+      onToast(response.warnings?.length ? response.warnings.join(' · ') : t('changesSaved'))
+    } catch (error) { onToast(error instanceof Error ? error.message : t('couldNotSave')) } finally { setBusy(false) }
   }
 
   const remove = async (rowId: number) => {
-    if (!window.confirm('Удалить эту строку?')) return
+    if (!window.confirm(t('confirmDelete'))) return
     setBusy(true)
-    try { await deleteEditorRow(dataset, rowId); await loadRows(); onRefresh(); onToast('Строка удалена') } catch (error) { onToast(error instanceof Error ? error.message : 'Не удалось удалить строку') } finally { setBusy(false) }
+    try { await deleteEditorRow(dataset, rowId); await loadRows(); onRefresh(); onToast(t('rowDeleted')) } catch (error) { onToast(error instanceof Error ? error.message : t('couldNotDelete')) } finally { setBusy(false) }
   }
 
   return <section className="editor-page">
-    <div className="page-intro editor-intro"><div><p className="eyebrow">DATA WORKSPACE</p><h2>Редактор данных</h2><p>Создавайте товары, поставщиков и операции прямо в StockPilot. Черновик сохраняется автоматически.</p></div><div className="editor-status">{restored ? '↩ Черновик восстановлен' : '● Данные сохраняются в SQLite'}</div></div>
-    <div className="editor-tabs">{DATASETS.map(item => <button key={item.key} className={dataset === item.key ? 'editor-tab active' : 'editor-tab'} onClick={() => selectDataset(item.key)}><strong>{item.label}</strong><small>{item.description}</small></button>)}</div>
+    <div className="page-intro editor-intro"><div><p className="eyebrow">{t('dataWorkspace')}</p><h2>{t('dataEditorTitle')}</h2><p>{t('dataEditorDescription')}</p></div><div className="editor-status">{restored ? t('draftRestored') : t('savedToSqlite')}</div></div>
+    <div className="editor-tabs">{DATASETS.map(item => <button key={item.key} className={dataset === item.key ? 'editor-tab active' : 'editor-tab'} onClick={() => selectDataset(item.key)}><strong>{t(item.label)}</strong><small>{t(item.description)}</small></button>)}</div>
     <div className="editor-layout">
-      <div className="content-card editor-table-card"><div className="card-header"><div><p className="eyebrow">{currentConfig.label.toUpperCase()}</p><h3>Записи <span>{total}</span></h3></div><div className="header-actions"><div className="search editor-search"><span>⌕</span><input value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder="Найти…" /></div><a className="button subtle" href={editorExportUrl(dataset, 'xlsx')}>↓ XLSX</a><a className="button subtle" href={editorExportUrl(dataset, 'csv')}>↓ CSV</a><button className="button primary" onClick={startNew}>＋ Новая строка</button></div></div><div className="table-wrap"><table className="editor-table"><thead><tr>{visibleFields.map(field => <th key={field.key}>{field.label}</th>)}<th>Действия</th></tr></thead><tbody>{rows.map(row => <tr key={row.row_id}>{visibleFields.map(field => <td key={field.key}>{displayValue(row[field.key])}</td>)}<td><button className="table-action" onClick={() => editRow(row)}>Изменить</button><button className="table-action danger" onClick={() => remove(row.row_id)}>Удалить</button></td></tr>)}</tbody></table>{!rows.length && <div className="empty">Пока нет записей. Создайте первую строку.</div>}</div><div className="editor-pagination"><span>{total ? `${page * 50 + 1}–${Math.min((page + 1) * 50, total)} из ${total}` : '0 записей'}</span><div><button className="button subtle" disabled={page === 0} onClick={() => setPage(value => value - 1)}>←</button><button className="button subtle" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>→</button></div></div></div>
-      <div className="content-card editor-form-card"><div className="card-header"><div><p className="eyebrow">{editingId === null ? 'NEW RECORD' : 'EDIT RECORD'}</p><h3>{editingId === null ? 'Добавить строку' : 'Изменить строку'}</h3></div>{editingId !== null && <button className="close editor-close" onClick={startNew}>×</button>}</div><div className="editor-form">{currentConfig.fields.map(field => <label key={field.key} className="editor-field"><span>{field.label}{field.required && ' *'}</span>{field.type === 'checkbox' ? <input type="checkbox" checked={Boolean(form[field.key])} onChange={event => changeField(field, event.target.checked)} /> : <input type={field.type || 'text'} value={String(form[field.key] ?? '')} list={lookups[field.key] ? `lookup-${field.key}` : undefined} onChange={event => changeField(field, event.target.value)} />}{lookups[field.key] && <datalist id={`lookup-${field.key}`}>{lookups[field.key].map(value => <option key={value} value={value} />)}</datalist>}</label>)}<button className="button primary wide" onClick={save} disabled={busy}>{busy ? 'Сохраняем…' : editingId === null ? 'Сохранить строку' : 'Сохранить изменения'}</button><small className="editor-hint">Последнее состояние формы автоматически сохраняется как черновик каждые несколько секунд.</small></div></div>
+      <div className="content-card editor-table-card"><div className="card-header"><div><p className="eyebrow">{t(currentConfig.label).toUpperCase()}</p><h3>{t('records')} <span>{total}</span></h3></div><div className="header-actions"><div className="search editor-search"><span>⌕</span><input value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder={t('find')} /></div><a className="button subtle" href={editorExportUrl(dataset, 'xlsx')}>XLSX</a><a className="button subtle" href={editorExportUrl(dataset, 'csv')}>CSV</a><button className="button primary" onClick={startNew}>{t('newRow')}</button></div></div><div className="table-wrap"><table className="editor-table"><thead><tr>{visibleFields.map(field => <th key={field.key}>{t(field.labelKey)}</th>)}<th>{t('actions')}</th></tr></thead><tbody>{rows.map(row => <tr key={row.row_id}>{visibleFields.map(field => <td key={field.key}>{displayValue(row[field.key], t('yes'), t('no'))}</td>)}<td><button className="table-action" onClick={() => editRow(row)}>{t('edit')}</button><button className="table-action danger" onClick={() => remove(row.row_id)}>{t('delete')}</button></td></tr>)}</tbody></table>{!rows.length && <div className="empty">{t('noRecords')}</div>}</div><div className="editor-pagination"><span>{total ? t('recordsCount', { from: page * 50 + 1, to: Math.min((page + 1) * 50, total), total }) : t('zeroRecords')}</span><div><button className="button subtle" disabled={page === 0} onClick={() => setPage(value => value - 1)}>←</button><button className="button subtle" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>→</button></div></div></div>
+      <div className="content-card editor-form-card"><div className="card-header"><div><p className="eyebrow">{editingId === null ? t('newRecord') : t('editRecord')}</p><h3>{editingId === null ? t('addRow') : t('editRow')}</h3></div>{editingId !== null && <button className="close editor-close" onClick={startNew}>×</button>}</div><div className="editor-form">{currentConfig.fields.map(field => <label key={field.key} className="editor-field"><span>{t(field.labelKey)}{field.required && ' *'}</span>{field.type === 'checkbox' ? <input type="checkbox" checked={Boolean(form[field.key])} onChange={event => changeField(field, event.target.checked)} /> : <input type={field.type || 'text'} value={String(form[field.key] ?? '')} list={lookups[field.key] ? `lookup-${field.key}` : undefined} onChange={event => changeField(field, event.target.value)} />}{lookups[field.key] && <datalist id={`lookup-${field.key}`}>{lookups[field.key].map(value => <option key={value} value={value} />)}</datalist>}</label>)}<button className="button primary wide" onClick={save} disabled={busy}>{busy ? t('saving') : editingId === null ? t('saveRow') : t('saveChanges')}</button><small className="editor-hint">{t('editorHint')}</small></div></div>
     </div>
   </section>
 }
