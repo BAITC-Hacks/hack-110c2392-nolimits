@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
 from typing import Any
 
 import numpy as np
@@ -16,52 +15,95 @@ def _number(value: Any) -> float:
         return 0.0
 
 
-def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | None = None, category: str | None = None, safety_days: int = 7, service_factor: float = 1.65, outlier_threshold: float = 3.5) -> tuple[list[dict], list[dict]]:
+def prepare_demand(data: dict[str, pd.DataFrame], warehouse: str | None = None, category: str | None = None, outlier_threshold: float = 3.5) -> tuple[pd.DataFrame, list[dict]]:
+    """Build one calendar-day demand series per SKU/warehouse for calculation and charts."""
     sales = data['sales'].copy()
     if sales.empty:
-        return [], []
-    sales['date'] = pd.to_datetime(sales['date'])
-    sales['quantity'] = pd.to_numeric(sales['quantity'], errors='coerce').fillna(0).clip(lower=0)
+        return pd.DataFrame(), []
+    sales['date'] = pd.to_datetime(sales['date']).dt.normalize()
+    sales['quantity'] = pd.to_numeric(sales['quantity'], errors='coerce').fillna(0)
     if warehouse:
         sales = sales[sales['warehouse'] == warehouse]
     if category:
         sales = sales[sales['category'] == category]
-    sales['is_outlier'] = False
-    sales['outlier_reason'] = ''
-    for _, group_index in sales.groupby(['sku', 'warehouse']).groups.items():
-        mask = mad_outliers(sales.loc[group_index, 'quantity'], outlier_threshold)
-        sales.loc[group_index[mask.to_numpy()], 'is_outlier'] = True
-        sales.loc[group_index[mask.to_numpy()], 'outlier_reason'] = 'Robust MAD score above threshold; possible one-off order'
-    sales['adjusted_quantity'] = np.where(sales['is_outlier'], sales['quantity'].groupby([sales['sku'], sales['warehouse']]).transform('median'), sales['quantity'])
-    outliers = sales[sales['is_outlier']].copy()
+    if sales.empty:
+        return pd.DataFrame(), []
+    if 'transaction_type' in sales:
+        dropship = sales['transaction_type'].astype(str).str.contains('транзитная поставка|dropship|drop-ship', case=False, regex=True)
+        sales = sales.loc[~dropship].copy()
+        # Reconcile credit notes against the originating client invoice before
+        # anomaly detection. A 4,000-unit typo with a -3,960 return is 40 units.
+        for returned in sales.loc[sales['quantity'] < 0].sort_values('date').itertuples():
+            outstanding = -float(returned.quantity)
+            candidates = sales[(sales['sku'] == returned.sku) & (sales['warehouse'] == returned.warehouse)
+                               & (sales['customer_id'] == returned.customer_id)
+                               & (sales['date'] <= returned.date)
+                               & (sales['date'] >= returned.date - pd.Timedelta(days=7))
+                               & (sales['quantity'] > 0)].sort_values('date', ascending=False)
+            for index in candidates.index:
+                offset = min(outstanding, float(sales.at[index, 'quantity']))
+                sales.at[index, 'quantity'] -= offset
+                outstanding -= offset
+                if outstanding <= 0:
+                    break
+    sales['quantity'] = sales['quantity'].clip(lower=0)
+    if sales.empty:
+        return pd.DataFrame(), []
+    sales['adjusted_quantity'] = sales['quantity'].astype(float)
+    # A purchase may be split across many invoice lines. Detect the client/day total.
+    keys = ['sku', 'warehouse', 'date', 'customer_id']
+    client_day = sales.groupby(keys, dropna=False)['quantity'].sum().reset_index()
+    client_day['is_outlier'] = False
+    for _, indices in client_day.groupby(['sku', 'warehouse']).groups.items():
+        flagged = mad_outliers(client_day.loc[indices, 'quantity'], outlier_threshold)
+        client_day.loc[indices[flagged.to_numpy()], 'is_outlier'] = True
+    sales = sales.merge(client_day[keys + ['is_outlier']], on=keys, how='left', validate='many_to_one')
+    sales.loc[sales['is_outlier'], 'adjusted_quantity'] = 0.0
     outlier_rows = [{
-        'date': row.date.strftime('%Y-%m-%d'), 'sku': row.sku, 'warehouse': row.warehouse, 'customer_id': row.customer_id,
-        'quantity': round(_number(row.quantity), 1), 'typical_quantity': round(_number(row.adjusted_quantity), 1),
-        'reason': row.outlier_reason, 'used_in_forecast': False,
-    } for row in outliers.itertuples()]
+        'date': item.date.strftime('%Y-%m-%d'), 'sku': item.sku, 'warehouse': item.warehouse,
+        'customer_id': item.customer_id, 'quantity': round(float(item.quantity), 2),
+        'typical_quantity': 0.0,
+        'reason': 'Client/day total exceeds robust MAD threshold; possible one-off order', 'used_in_forecast': False,
+    } for item in client_day.loc[client_day['is_outlier']].itertuples()]
     daily = sales.groupby(['sku', 'warehouse', 'date'], as_index=False).agg(
-        actual_sales=('quantity', 'sum'), adjusted_demand=('adjusted_quantity', 'sum'), product_name=('product_name', 'first'), category=('category', 'first'))
-    stockouts = data.get('stockouts', pd.DataFrame()).copy()
-    stockouts['start_date'] = pd.to_datetime(stockouts.get('start_date', pd.Series(dtype='datetime64[ns]')), errors='coerce')
-    stockouts['end_date'] = pd.to_datetime(stockouts.get('end_date', pd.Series(dtype='datetime64[ns]')), errors='coerce')
-    stockout_lookup: dict[tuple[str, str], list[tuple[pd.Timestamp, pd.Timestamp]]] = defaultdict(list)
-    for row in stockouts.itertuples():
-        stockout_lookup[(row.sku, row.warehouse)].append((row.start_date, row.end_date))
-    daily['estimated_lost_demand'] = 0.0
-    daily['is_stockout'] = False
-    for (sku, wh), indices in daily.groupby(['sku', 'warehouse']).groups.items():
-        idx = list(indices)
-        series = daily.loc[idx].sort_values('date')
-        for start, end in stockout_lookup.get((sku, wh), []):
-            if pd.isna(start) or pd.isna(end):
-                continue
-            comparable = series[(series['date'] < start) | (series['date'] > end)]['adjusted_demand']
-            expected = float(comparable.median()) if len(comparable) else float(series['adjusted_demand'].median())
-            affected = series['date'].between(start, end)
-            affected_idx = series.loc[affected].index
-            daily.loc[affected_idx, 'estimated_lost_demand'] = np.maximum(expected - daily.loc[affected_idx, 'adjusted_demand'], 0)
-            daily.loc[affected_idx, 'adjusted_demand'] = np.maximum(daily.loc[affected_idx, 'adjusted_demand'], expected)
-            daily.loc[affected_idx, 'is_stockout'] = True
+        actual_sales=('quantity', 'sum'), adjusted_demand=('adjusted_quantity', 'sum'),
+        product_name=('product_name', 'first'), category=('category', 'first'), is_outlier=('is_outlier', 'any'))
+    for _, indices in daily.groupby(['sku', 'warehouse']).groups.items():
+        normal = daily.loc[indices, 'adjusted_demand']
+        typical_day = float(normal[normal > 0].median()) if (normal > 0).any() else 0.0
+        only_outlier = daily.loc[indices, 'is_outlier'] & (normal == 0)
+        daily.loc[indices[only_outlier.to_numpy()], 'adjusted_demand'] = typical_day
+    last_date = daily['date'].max()
+    stockouts = data.get('stockouts', pd.DataFrame())
+    result = []
+    for (sku, wh), group in daily.groupby(['sku', 'warehouse']):
+        group = group.set_index('date').reindex(pd.date_range(group['date'].min(), last_date, freq='D').rename('date'))
+        group[['sku', 'warehouse', 'product_name', 'category']] = group[['sku', 'warehouse', 'product_name', 'category']].ffill().bfill()
+        group[['actual_sales', 'adjusted_demand']] = group[['actual_sales', 'adjusted_demand']].fillna(0)
+        group['is_outlier'] = group['is_outlier'].eq(True)
+        group['estimated_lost_demand'] = 0.0
+        group['is_stockout'] = False
+        if not stockouts.empty:
+            periods = stockouts[(stockouts['sku'].astype(str) == str(sku)) & (stockouts['warehouse'] == wh)]
+            affected = np.zeros(len(group), dtype=bool)
+            for period in periods.itertuples():
+                start, end = pd.to_datetime(period.start_date), pd.to_datetime(period.end_date)
+                if pd.notna(start) and pd.notna(end) and end >= start:
+                    affected |= (group.index >= start) & (group.index <= end)
+            if affected.any():
+                comparable = group.loc[~affected, 'adjusted_demand']
+                expected = float(comparable.median()) if len(comparable) else 0.0
+                group.loc[affected, 'estimated_lost_demand'] = np.maximum(expected - group.loc[affected, 'adjusted_demand'], 0)
+                group.loc[affected, 'adjusted_demand'] = np.maximum(group.loc[affected, 'adjusted_demand'], expected)
+                group.loc[affected, 'is_stockout'] = True
+        result.append(group.reset_index())
+    return pd.concat(result, ignore_index=True), outlier_rows
+
+
+def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | None = None, category: str | None = None, safety_days: int = 7, service_factor: float = 1.65, outlier_threshold: float = 3.5) -> tuple[list[dict], list[dict]]:
+    daily, outlier_rows = prepare_demand(data, warehouse, category, outlier_threshold)
+    if daily.empty:
+        return [], []
     stock = data.get('stock', pd.DataFrame()).copy()
     transit = data.get('transit', pd.DataFrame()).copy()
     if not stock.empty:
@@ -82,7 +124,12 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         stock_rows = stock[(stock['sku'].astype(str) == str(sku)) & (stock['warehouse'] == wh)] if not stock.empty else pd.DataFrame()
         transit_rows = transit[(transit['sku'].astype(str) == str(sku)) & (transit['warehouse'] == wh)] if not transit.empty else pd.DataFrame()
         current = _number(stock_rows.iloc[0].get('current_stock', 0)) if not stock_rows.empty else 0
-        incoming = _number(transit_rows['quantity_in_transit'].sum()) if not transit_rows.empty else 0
+        if not transit_rows.empty:
+            arrivals = pd.to_datetime(transit_rows['expected_arrival_date'], errors='coerce')
+            due = group['date'].max() + pd.Timedelta(days=lead)
+            incoming = _number(transit_rows.loc[arrivals <= due, 'quantity_in_transit'].sum())
+        else:
+            incoming = 0
         inventory_position = current + incoming
         raw_order = max(0.0, forecast_lead + safety - inventory_position)
         moq = max(0.0, _number(supplier.get('moq', 0)))
@@ -90,8 +137,8 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         recommended = raw_order
         if recommended > 0 and moq:
             recommended = max(recommended, moq)
-        if recommended > 0 and package > 1:
-            recommended = np.ceil(recommended / package) * package
+        if recommended > 0:
+            recommended = np.ceil((recommended - 1e-9) / package) * package
         avg = max(details['average_daily_demand'], 0.01)
         days_cover = inventory_position / avg
         if days_cover < lead and raw_order > 0:
@@ -109,9 +156,10 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         total_cost_kzt = round(recommended * unit_cost, 2)
 
         lost = float(group['estimated_lost_demand'].sum())
-        outlier_count = len(outliers[(outliers['sku'] == sku) & (outliers['warehouse'] == wh)])
+        relevant_outliers = [item for item in outlier_rows if item['sku'] == sku and item['warehouse'] == wh]
+        outlier_count = len(relevant_outliers)
         explanation = _explanation(recommended, lead, forecast_lead, current, incoming, safety, details, outlier_count, lost, moq, package, unit_cost, total_cost_kzt)
-        metadata = {'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'outliers_removed': outlier_rows, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
+        metadata = {'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'outliers_removed': relevant_outliers, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
         recommendations.append({'id': f'{sku}:{wh}', 'sku': sku, 'product_name': group['product_name'].iloc[0], 'warehouse': wh, 'category': group['category'].iloc[0], 'supplier_id': str(supplier.get('supplier_id', 'UNASSIGNED')), 'supplier_name': str(supplier.get('supplier_name', 'Unassigned supplier')), 'current_stock': round(current, 2), 'in_transit': round(incoming, 2), 'average_daily_demand': round(avg, 2), 'forecast_lead_time': round(forecast_lead, 2), 'safety_stock': round(safety, 2), 'inventory_position': round(inventory_position, 2), 'raw_recommended_quantity': round(raw_order, 2), 'recommended_quantity': round(recommended, 2), 'final_quantity': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'lead_time_days': lead, 'days_of_cover': round(days_cover, 1), 'urgency': urgency, 'trend_direction': details['trend_direction'], 'trend_percent': details['trend_percent'], 'seasonality_detected': details['seasonality_detected'], 'outliers_removed': outlier_count, 'estimated_lost_demand': round(lost, 2), 'status': 'DRAFT', 'explanation': explanation, 'metadata': metadata})
     return recommendations, outlier_rows
 

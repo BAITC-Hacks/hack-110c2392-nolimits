@@ -32,6 +32,11 @@ def save_recommendations(rows: list[dict]) -> None:
     with Session(engine) as session:
         for row in rows:
             audit = session.get(OrderAudit, row['id']) or OrderAudit(id=row['id'])
+            if audit.status in {'ADJUSTED', 'APPROVED'}:
+                row['status'] = audit.status
+                row['final_quantity'] = audit.final_quantity
+                row['total_cost_kzt'] = round(audit.final_quantity * row['unit_cost'], 2)
+                continue
             audit.status = row['status']
             audit.final_quantity = row['final_quantity']
             audit.calculation_metadata = json.dumps(row['metadata'], default=str)

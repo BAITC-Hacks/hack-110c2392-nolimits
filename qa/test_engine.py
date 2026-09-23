@@ -10,6 +10,27 @@ from app.services.forecasting import forecast_series
 from app.services.replenishment import calculate_recommendations
 
 
+def test_stress_return_reconciliation_and_dropship_exclusion():
+    from conftest import make_data
+    from app.services.replenishment import prepare_demand
+
+    data = make_data()
+    base = data['sales']
+    typo = base.iloc[[70]].copy()
+    typo['quantity'], typo['customer_id'], typo['transaction_type'] = 4000, 'TYPO-CLIENT', 'operator error'
+    returned = base.iloc[[71]].copy()
+    returned['quantity'], returned['customer_id'], returned['transaction_type'] = -3960, 'TYPO-CLIENT', 'СТОРНО / ВОЗВРАТ'
+    dropship = base.iloc[[72]].copy()
+    dropship['quantity'], dropship['customer_id'], dropship['transaction_type'] = 5000, 'PROJECT', 'ТРАНЗИТНАЯ ПОСТАВКА'
+    base['transaction_type'] = 'regular'
+    data['sales'] = pd.concat([base, typo, returned, dropship], ignore_index=True)
+
+    daily, _ = prepare_demand(data)
+    actual = daily.set_index('date')['actual_sales']
+    assert actual.loc[base.iloc[70]['date']] == 50  # 10 regular + (4000 - 3960)
+    assert actual.loc[base.iloc[72]['date']] == 10  # direct-to-customer shipment
+
+
 def calculate(data, **kwargs):
     settings = {"service_factor": 0, "safety_days": 0, **kwargs}
     return calculate_recommendations(data, **settings)[0][0]

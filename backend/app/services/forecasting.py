@@ -43,7 +43,6 @@ def forecast_series(history: pd.DataFrame, horizon: int, safety_days: int = 7) -
     weights = np.linspace(1, 2, len(recent))
     base = float(np.average(recent, weights=weights)) if len(recent) else 0.0
     direction, trend_percent = trend(history["adjusted_demand"])
-    trend_factor = 1 + np.clip(trend_percent, -25, 35) / 100 * np.arange(1, horizon + 1) / max(horizon, 1)
     
     seasonal_detected = False
     seasonal_dow_factor: dict[int, float] = {}
@@ -68,15 +67,24 @@ def forecast_series(history: pd.DataFrame, horizon: int, safety_days: int = 7) -
         if len(by_month) >= 4 and (by_month.max() - by_month.min()) / overall >= 0.20:
             seasonal_detected = True
             seasonal_month_factor = {int(k): float(v / overall) for k, v in by_month.items()}
+
+    if seasonal_month_factor:
+        # Estimate trend after removing the calendar wave; otherwise an October
+        # baseline incorrectly treats last winter's peak as a long decline.
+        deseasonalized = work["adjusted_demand"] / work["date"].dt.month.map(seasonal_month_factor).fillna(1)
+        direction, trend_percent = trend(deseasonalized)
+    trend_factor = 1 + np.clip(trend_percent, -25, 35) / 100 * np.arange(1, horizon + 1) / max(horizon, 1)
             
     future_dates = pd.date_range(pd.to_datetime(history["date"].max()) + pd.Timedelta(days=1), periods=horizon, freq="D")
     forecast = base * trend_factor
     
     if seasonal_dow_factor:
-        forecast = forecast * np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in future_dates])
+        recent_factor = np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in work["date"].tail(len(recent))])
+        forecast = forecast * np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in future_dates]) / max(float(np.average(recent_factor, weights=weights)), 0.01)
         
     if seasonal_month_factor:
-        forecast = forecast * np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in future_dates])
+        recent_factor = np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in work["date"].tail(len(recent))])
+        forecast = forecast * np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in future_dates]) / max(float(np.average(recent_factor, weights=weights)), 0.01)
         
     model = "weighted_moving_average"
     if len(history) >= 180:

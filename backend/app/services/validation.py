@@ -4,6 +4,7 @@ from io import BytesIO
 from typing import Any
 
 import pandas as pd
+import numpy as np
 
 
 REQUIRED_COLUMNS: dict[str, set[str]] = {
@@ -24,6 +25,7 @@ COLUMN_ALIASES: dict[str, dict[str, list[str]]] = {
         "customer_id": ["customer_id", "id_клиента", "id клиента", "клиент", "контрагент", "client_id"],
         "warehouse": ["warehouse", "склад", "склад_отгрузки", "склад отгрузки", "филиал"],
         "category": ["category", "категория", "товарная_группа", "товарная группа", "группа"],
+        "transaction_type": ["transaction_type", "тип_транзакции", "тип транзакции", "operation_type"],
     },
     "stock": {
         "sku": ["sku", "артикул", "код", "код_товара"],
@@ -126,10 +128,11 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
     numeric_cols = {"quantity", "price", "current_stock", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
     for col in numeric_cols.intersection(frame.columns):
         values = pd.to_numeric(frame[col], errors="coerce")
-        bad = int(values.isna().sum())
+        bad_mask = ~np.isfinite(values)
+        bad = int(bad_mask.sum())
         if bad:
-            errors.append(f"{dataset}.{col}: {bad} non-numeric value(s)")
-            invalid_rows |= values.isna()
+            errors.append(f"{dataset}.{col}: {bad} non-finite or non-numeric value(s)")
+            invalid_rows |= bad_mask
         frame[col] = values
         
     if "sku" in frame:
@@ -146,6 +149,9 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         if col in frame:
             values = pd.to_numeric(frame[col], errors="coerce")
             negative_mask = values < 0
+            if dataset == "sales" and col == "quantity" and "transaction_type" in frame:
+                is_return = frame["transaction_type"].astype(str).str.contains("сторно|возврат|return|credit", case=False, regex=True)
+                negative_mask &= ~is_return
             negative = int(negative_mask.sum())
             if negative:
                 errors.append(f"{dataset}.{col}: {negative} negative value(s) are not allowed")
@@ -164,10 +170,25 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         if invalid:
             errors.append(f"suppliers.lead_time_days: {invalid} value(s) must be greater than zero")
             invalid_rows |= pd.to_numeric(frame["lead_time_days"], errors="coerce") <= 0
+        if "package_size" in frame:
+            invalid_package = frame["package_size"] <= 0
+            if invalid_package.any():
+                errors.append(f"suppliers.package_size: {int(invalid_package.sum())} value(s) must be greater than zero")
+                invalid_rows |= invalid_package
         duplicate_keys = int(frame.duplicated(subset=["supplier_id", "sku"]).sum())
         if duplicate_keys:
             warnings.append(f"suppliers: {duplicate_keys} duplicate supplier/SKU mapping(s) ignored")
             frame = frame.drop_duplicates(subset=["supplier_id", "sku"])
+    if dataset == "stock":
+        duplicate_keys = frame.duplicated(subset=["sku", "warehouse"], keep=False)
+        if duplicate_keys.any():
+            errors.append(f"stock: {int(duplicate_keys.sum())} conflicting SKU/warehouse balance(s)")
+            invalid_rows |= duplicate_keys
+    if dataset == "stockouts":
+        reversed_dates = frame["start_date"] > frame["end_date"]
+        if reversed_dates.any():
+            errors.append(f"stockouts: {int(reversed_dates.sum())} reversed date interval(s)")
+            invalid_rows |= reversed_dates
     # Keep valid rows so one malformed record does not discard the full upload.
     if invalid_rows.any():
         frame = frame.loc[~invalid_rows].copy()
