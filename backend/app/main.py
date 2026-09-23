@@ -44,6 +44,17 @@ class AppState:
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
+    def load_ekt_extreme(self) -> dict[str, int]:
+        from pathlib import Path
+        path = Path(__file__).parent.parent / "data" / "ekt_extreme_anomalies_sales_and_stock.xlsx"
+        if not path.exists():
+            return {}
+        with open(path, "rb") as file:
+            self.datasets = parse_workbook(file.read())
+        self.recommendations = []
+        self.outliers = []
+        return {key: len(value) for key, value in self.datasets.items()}
+
 
 state = AppState()
 
@@ -95,9 +106,16 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
     cleaned, errors, warnings = validate_table(dataset, frame, known, known_skus)
     if len(cleaned):
         state.datasets[dataset] = cleaned
-        state.recommendations = []
-        state.outliers = []
-    return {'dataset': dataset, 'rows_loaded': len(cleaned), 'errors': errors, 'warnings': warnings}
+        state.recommendations, state.outliers = calculate_recommendations(state.datasets)
+        save_recommendations(state.recommendations)
+    return {
+        'dataset': dataset,
+        'rows_loaded': len(cleaned),
+        'errors': errors,
+        'warnings': warnings,
+        'recommendations': len(state.recommendations),
+        'outliers': len(state.outliers),
+    }
 
 
 @app.post('/api/data/load-ekt')
@@ -112,11 +130,23 @@ def load_ekt() -> dict:
     return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
+@app.post('/api/data/load-ekt-extreme')
+def load_ekt_extreme() -> dict:
+    counts = state.load_ekt_extreme()
+    if not counts:
+        raise HTTPException(status_code=404, detail='ekt.kz extreme anomaly dataset file not found')
+    recs, outliers = calculate_recommendations(state.datasets)
+    state.recommendations = recs
+    state.outliers = outliers
+    save_recommendations(recs)
+    return {'message': 'Extreme ekt.kz anomaly dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+
+
 @app.post('/api/data/upload-workbook')
 async def upload_workbook(file: UploadFile = File(...)) -> dict:
     try:
         raw = await file.read()
-        datasets = parse_workbook(raw)
+        datasets, errors, warnings = parse_workbook(raw, include_report=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
     state.datasets = datasets
@@ -125,7 +155,7 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     counts = {key: len(value) for key, value in state.datasets.items()}
-    return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+    return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
 
 
 @app.post('/api/recommendations/calculate')

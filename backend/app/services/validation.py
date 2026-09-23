@@ -174,7 +174,7 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
     return frame, errors, warnings
 
 
-def parse_workbook(raw: bytes) -> dict[str, pd.DataFrame]:
+def parse_workbook(raw: bytes, include_report: bool = False) -> dict[str, pd.DataFrame] | tuple[dict[str, pd.DataFrame], list[str], list[str]]:
     """
     Parses a multi-sheet Excel workbook (such as ekt_sales_and_stock_history.xlsx).
     Automatically maps known sheet names to standard datasets and extracts:
@@ -188,27 +188,37 @@ def parse_workbook(raw: bytes) -> dict[str, pd.DataFrame]:
     sheet_names = excel_file.sheet_names
     
     datasets: dict[str, pd.DataFrame] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
     
     # Mapping sheet names
     for sheet in sheet_names:
         sheet_lower = sheet.lower()
         if "продаж" in sheet_lower or "sale" in sheet_lower:
             df = excel_file.parse(sheet)
-            cleaned, _, _ = validate_table("sales", df)
+            cleaned, sheet_errors, sheet_warnings = validate_table("sales", df)
             datasets["sales"] = cleaned
+            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
+            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
         elif "дефицит" in sheet_lower or "stockout" in sheet_lower:
             df = excel_file.parse(sheet)
-            cleaned, _, _ = validate_table("stockouts", df)
+            cleaned, sheet_errors, sheet_warnings = validate_table("stockouts", df)
             datasets["stockouts"] = cleaned
+            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
+            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
         elif "поставщик" in sheet_lower or "supplier" in sheet_lower:
             df = excel_file.parse(sheet)
-            cleaned, _, _ = validate_table("suppliers", df)
+            cleaned, sheet_errors, sheet_warnings = validate_table("suppliers", df)
             datasets["suppliers"] = cleaned
+            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
+            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
         elif "остатк" in sheet_lower or "stock" in sheet_lower or "пути" in sheet_lower:
             df = excel_file.parse(sheet)
             # This sheet usually contains both stock and transit columns
-            cleaned_stock, _, _ = validate_table("stock", df)
+            cleaned_stock, sheet_errors, sheet_warnings = validate_table("stock", df)
             datasets["stock"] = cleaned_stock
+            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
+            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
             
             # Extract transit if present in this sheet
             df_norm = normalize_columns("transit", df)
@@ -217,12 +227,16 @@ def parse_workbook(raw: bytes) -> dict[str, pd.DataFrame]:
                 if not transit_df.empty:
                     if "expected_arrival_date" not in transit_df.columns:
                         transit_df["expected_arrival_date"] = pd.Timestamp.now() + pd.Timedelta(days=7)
-                    cleaned_transit, _, _ = validate_table("transit", transit_df)
+                    cleaned_transit, transit_errors, transit_warnings = validate_table("transit", transit_df)
                     datasets["transit"] = cleaned_transit
+                    errors.extend(f"{sheet}: {message}" for message in transit_errors)
+                    warnings.extend(f"{sheet}: {message}" for message in transit_warnings)
                     
     # Fill any missing empty DataFrames
     for key in ["sales", "stock", "transit", "stockouts", "suppliers"]:
         if key not in datasets:
             datasets[key] = pd.DataFrame()
             
+    if include_report:
+        return datasets, errors, warnings
     return datasets
