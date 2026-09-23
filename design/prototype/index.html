@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>StockPilot · Концепция рабочего пространства</title><link rel="stylesheet" href="../tokens/tokens.css"><link rel="stylesheet" href="styles.css"></head>
+<body>
+<a class="skip" href="#main">К содержимому</a>
+<div class="prototype-note">ДИЗАЙН-ПРОТОТИП <span>Все данные вымышлены. Действия не изменяют рабочий проект.</span></div>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="#procurement"><span class="brand-icon" aria-hidden="true">S</span><span>StockPilot<small>Управление закупками</small></span></a>
+    <div class="workspace"><span class="avatar">Д</span><div><strong>Демо-компания</strong><small>Учебное пространство</small></div></div>
+    <p class="nav-caption">РАБОЧЕЕ ПРОСТРАНСТВО</p>
+    <nav aria-label="Основная навигация">
+      <a href="#procurement" data-page="procurement"><span aria-hidden="true">▦</span>План закупок</a>
+      <a href="#data" data-page="data"><span aria-hidden="true">⇧</span>Данные</a>
+      <a href="#exceptions" data-page="exceptions"><span aria-hidden="true">◇</span>Исключения</a>
+      <a href="#history" data-page="history"><span aria-hidden="true">◷</span>История <small>Концепция</small></a>
+      <a href="#policies" data-page="policies"><span aria-hidden="true">⚙</span>Политики <small>Концепция</small></a>
+    </nav>
+    <div class="sidebar-foot"><strong>Каждое число объяснимо</strong><p>От источника данных<br>до решения о закупке.</p><span class="badge blue">Визуальная концепция · 1.0</span></div>
+  </aside>
+  <div class="workspace-main">
+    <header class="context"><span>Демо-компания <span aria-hidden="true"> / </span> Планирование</span><span class="badge">Синтетический набор</span></header>
+    <main id="main" tabindex="-1">
+      <div class="page-heading"><div><p class="eyebrow">ЗАКУПКИ ПОД КОНТРОЛЕМ</p><h1 id="title">План закупок</h1><p id="description">Проверьте приоритетные позиции и подготовьте заказы поставщикам.</p></div><div id="page-actions"><button id="export" class="primary">Проверить экспорт <span aria-hidden="true">↗</span></button></div></div>
+      <div class="source"><span><i></i> Демо-срез: 23 сентября 2026, 09:00</span><span>Склад: Алматы · Пример расчёта № 024</span></div>
+      <section id="procurement" class="page">
+        <div class="metrics" id="metrics"></div>
+        <div class="notice"><span class="notice-icon" aria-hidden="true">!</span><div><strong>Одна позиция требует проверки цены</strong><span>Бюджет включает только позиции с известной стоимостью.</span></div><button id="show-missing" class="text-button">Посмотреть →</button></div>
+        <section class="panel"><div class="panel-top"><div><h2>Рекомендации к закупке</h2><p>Сначала позиции с наибольшим риском дефицита</p></div><span class="badge" id="row-count"></span></div>
+          <div class="toolbar"><label class="search"><span aria-hidden="true">⌕</span><input id="search" type="search" placeholder="Название или артикул" aria-label="Поиск по названию или артикулу"></label><select id="risk" aria-label="Приоритет"><option value="all">Все приоритеты</option><option value="critical">Критический</option><option value="high">Высокий</option><option value="normal">Плановый</option><option value="missing">Нет цены</option></select><button id="reset">Сбросить</button></div>
+          <div class="selection" id="selection" aria-live="polite">Выберите позиции для проверки экспорта.</div>
+          <div class="table-wrap"><table role="table" aria-label="Рекомендации к закупке"><thead role="rowgroup"><tr role="row"><th scope="col" role="columnheader"><input id="select-all" type="checkbox" aria-label="Выбрать все видимые позиции"></th><th scope="col" role="columnheader">Позиция / склад</th><th scope="col" role="columnheader">Приоритет</th><th scope="col" role="columnheader">Остаток</th><th class="numeric" scope="col" role="columnheader">К заказу</th><th class="numeric" scope="col" role="columnheader">Стоимость</th><th scope="col" role="columnheader">Решение</th></tr></thead><tbody id="rows" role="rowgroup"></tbody></table></div>
+          <div id="empty" class="empty" hidden><h3>Позиций не найдено</h3><p>Попробуйте изменить запрос или сбросить фильтры.</p></div>
+          <footer class="panel-footer"><span id="range"></span><span>Все количества указаны в единицах товара</span></footer>
+        </section>
+        <div class="next-step"><div><span class="eyebrow">ПОНЯТНОЕ РЕШЕНИЕ</span><h3>Почему именно столько?</h3><p>Откройте позицию: увидите спрос, остатки, транзит и правила округления.</p></div><div class="formula-chip">Спрос + резерв − запас → заказ</div></div>
+      </section>
+      <section id="data" class="page" hidden><div class="notice"><div><strong>Загрузка начинается с проверки</strong><span>Ни один файл не отправляется из этого прототипа. Ниже — пример отчёта.</span></div></div><div class="data-grid" id="sources"></div><section class="panel padded"><h2>Проверка нового набора</h2><p>Пример: закупки_сентябрь.xlsx · 5 листов</p><button id="validate" class="primary">Показать пример проверки</button><div id="validation" hidden><div class="notice"><div><strong>Нужна корректировка перед загрузкой</strong><span>Продажи, строка 18: дата не распознана. Поставщики, строка 7: кратность должна быть больше нуля.</span></div></div><p>Принято к проверке: 1 240 строк. Блокирующих ошибок: 2. Предупреждений: 1.</p><button disabled>Импорт недоступен в прототипе</button><p class="muted">Для настоящего предварительного просмотра нужен новый API preview/commit.</p></div></section></section>
+      <section id="exceptions" class="page" hidden><div class="panel padded"><span class="badge amber">Требует проверки</span><h2>Разовая крупная продажа</h2><p>Демо-позиция CB-250 · Алматы · 19 августа 2026</p><div class="exception-metrics"><div><small>Наблюдаемое значение</small><strong>650 м</strong></div><div><small>Обычный уровень</small><strong>28 м</strong></div><div><small>Влияние</small><strong>Исключено из регулярного спроса</strong></div></div><p>Исходная продажа сохранена. Это вымышленный пример объяснения аномалии, не реальный вывод о поставщике.</p><button data-open="2">Открыть позицию →</button></div><div class="panel padded"><span class="badge amber">Нет цены</span><h2>Контактор, 25 А</h2><p>DE-025 · Нельзя рассчитать полный бюджет заказа.</p><button data-open="4">Проверить позицию →</button></div></section>
+      <section id="history" class="page" hidden><div class="panel padded"><span class="badge blue">Концепция · этап 2</span><h2>История расчётов и решений</h2><p>Будет хранить дату среза, версии источников, параметры расчёта и причины ручных изменений.</p><ol class="timeline"><li><strong>Расчёт создан</strong><p>Неизменяемый снимок рекомендаций и источников.</p></li><li><strong>Количество скорректировано</strong><p>Предыдущее и новое значение, автор и причина.</p></li><li><strong>Заказ утверждён</strong><p>Версия и время серверного подтверждения.</p></li></ol><p class="muted">Это схема будущего процесса. Реальных событий и пользователей здесь нет; требуется backend истории.</p></div></section>
+      <section id="policies" class="page" hidden><div class="panel padded"><span class="badge blue">Концепция · этап 2</span><h2>Правила планирования</h2><p>Каждая настройка должна показывать область действия и влияние на заказ до применения.</p><div class="data-grid"><article><h3>Поставщик</h3><p>Срок, минимальный заказ, кратность упаковки.</p></article><article><h3>Категория</h3><p>Страховой запас и допустимый риск.</p></article><article><h3>Транзит</h3><p>Дата прибытия, просрочки и доступность.</p></article></div><p class="muted">Редактирование появится после версионирования политик и проверки прав в API.</p></div></section>
+      <footer class="page-footer">StockPilot · Концепция интерфейса <span>Спецификации экранов: design/04_SCREEN_SPECIFICATIONS.md</span></footer>
+    </main>
+  </div>
+</div>
+<dialog id="detail" aria-labelledby="detail-title"><div class="dialog-head"><div><span class="eyebrow">ОБОСНОВАНИЕ ЗАКУПКИ</span><h2 id="detail-title"></h2><p id="detail-subtitle"></p></div><button class="close" id="close-detail" aria-label="Закрыть карточку">×</button></div><div class="dialog-body" id="detail-content"></div><form id="adjust-form"><label for="quantity">К заказу <span id="quantity-unit"></span></label><div class="edit-line"><input id="quantity" type="number" min="0" step="1" required><button class="primary" type="submit">Сохранить в макете</button></div><p id="save-feedback" role="status">Изменения сохраняются только до перезагрузки страницы.</p><div id="discard" hidden><strong>Изменения не сохранены.</strong><button type="button" id="keep-editing">Продолжить редактирование</button><button type="button" id="discard-edit">Закрыть без сохранения</button></div></form></dialog>
+<dialog id="export-dialog" aria-labelledby="export-title"><div class="dialog-head"><h2 id="export-title">Проверка экспорта</h2><button class="close" id="close-export" aria-label="Закрыть проверку экспорта">×</button></div><div class="dialog-body"><div id="export-summary"></div><div class="notice"><div><strong>Это предпросмотр сценария</strong><span>Файл не создаётся и заказ не отправляется. Экспорт выбранных строк требует изменения рабочего API.</span></div></div></div></dialog>
+<script src="fixtures.js"></script><script src="app.js"></script>
+</body></html>

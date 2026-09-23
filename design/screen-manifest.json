@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "language": "ru",
+  "status": "proposal",
+  "screens": [
+    {"id":"S01","name":"План закупок","route":"/procurement","phase":1,"prototype":"interactive","dependencies":["recommendations","source context for freshness","unit for quantities"]},
+    {"id":"S02","name":"Карточка позиции","route":"/procurement?item=ID","phase":1,"prototype":"local demonstration","dependencies":["analytics","adjust","approve","versioning and reason for concurrent editing"]},
+    {"id":"S03","name":"Данные","route":"/data","phase":1,"prototype":"sample validation only","dependencies":["upload","preview/commit for staged import"]},
+    {"id":"S04","name":"Исключения","route":"/exceptions","phase":1,"prototype":"sample list","dependencies":["outliers","quality API for additional issue types"]},
+    {"id":"S05","name":"Экспорт","route":null,"phase":1,"prototype":"scope preview only","dependencies":["scoped export"]},
+    {"id":"S06","name":"История","route":"/history","phase":2,"prototype":"concept only","dependencies":["immutable runs","audit"]},
+    {"id":"S07","name":"Политики","route":"/policies","phase":2,"prototype":"concept only","dependencies":["versioned policies","permissions","impact preview"]}
+  ]
+}
