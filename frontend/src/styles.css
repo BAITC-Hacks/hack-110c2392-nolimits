@@ -624,17 +624,28 @@ h1{font-size:26px}
 .report{white-space:pre-wrap}
 .cell-muted{display:block;color:var(--muted);font-size:12px;margin-top:4px}
 /* Inventory operations from the teammate branch use the same visual system. */
-.operations-sections{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:24px}
-.operations-section{background:white;border:1px solid var(--border);border-radius:6px;padding:12px;text-align:left}
-.operations-section.active{background:#EAF3EE;border-color:#96B4A2;color:var(--primary)}
-.operations-section small{margin-top:4px}
+.operations-sections{display:flex;gap:0;overflow-x:auto;border-bottom:1px solid var(--border);margin-bottom:20px;scrollbar-width:thin}
+.operations-section{flex:0 0 auto;white-space:nowrap;background:transparent;border:0;border-bottom:3px solid transparent;padding:11px 20px 10px;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer}
+.operations-section:hover{color:var(--ink);background:#F5F8F6}
+.operations-section:focus-visible{outline:2px solid var(--primary);outline-offset:-3px}
+.operations-section.active{border-bottom-color:var(--primary);color:var(--primary);background:transparent}
 .movement-subtabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}
 .movement-subtabs button{padding:8px 12px;background:white;border:1px solid var(--border);border-radius:6px;font-size:13px}
 .movement-subtabs button.active{background:var(--primary);color:white;border-color:var(--primary)}
-.operations-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;align-items:start}
-.operations-main,.operations-aside{display:grid;gap:16px}
-.operations-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:24px}
-.add-line{align-self:end}
+.operations-layout{display:grid;grid-template-columns:minmax(0,.85fr) minmax(0,1.15fr);gap:16px;align-items:start}
+.operations-main{display:contents}
+.operations-aside{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:16px;min-width:0}
+.operations-card{min-width:0}
+.operations-page .card-header h3>span:not(.count){margin-left:8px;color:var(--muted);font-size:12px;font-weight:500}
+.operations-document{grid-column:1/-1}
+.operations-document .card-header{padding:14px 20px}
+.operations-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;padding:20px}
+.operations-document .operations-fields{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:16px 20px}
+.operations-product .line-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
+.operations-product .add-line{grid-column:1/-1;justify-self:stretch}
+.operations-lines{container-type:normal}
+.operations-lines .table-wrap{overflow-x:auto}
+.operations-lines .operations-table{min-width:560px}
 .operations-hint{padding:0 24px 24px;font-size:12px}
 .operations-submit{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 24px;border-top:1px solid var(--border)}
 .operations-submit span{color:var(--muted);font-size:12px}
@@ -645,8 +656,8 @@ h1{font-size:26px}
 .operations-recent>div{padding:12px 0;display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--border)}
 .operations-recent span{font-size:12px;color:var(--muted)}
 @container(max-width:850px){.operations-table,.operations-table tbody{display:block}.operations-table thead{display:none}.operations-table tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;padding:16px;border-bottom:1px solid var(--border)}.operations-table td{display:block;padding:0;border:0}.operations-table td::before{content:attr(data-label);display:block;color:var(--muted);font-size:12px;margin-bottom:4px}}
-@media(max-width:1200px){.operations-layout{grid-template-columns:1fr}.operations-aside{grid-template-columns:repeat(2,minmax(0,1fr))}.operations-sections{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:600px){.operations-sections{grid-template-columns:repeat(2,minmax(0,1fr));margin-bottom:16px}.operations-section small{display:none}.operations-fields{grid-template-columns:1fr;padding:16px}.operations-aside{grid-template-columns:1fr}.operations-submit{flex-direction:column;align-items:stretch;padding:16px}.operations-hint{padding:0 16px 16px}}
+@media(max-width:1180px){.operations-layout{grid-template-columns:1fr}.operations-aside{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}}
+@media(max-width:650px){.operations-sections{margin-bottom:16px}.operations-section{padding:11px 14px 10px}.operations-fields,.operations-document .operations-fields,.operations-product .line-fields{grid-template-columns:1fr;padding:16px}.operations-product .add-line{grid-column:1}.operations-aside{grid-template-columns:1fr}.operations-submit{flex-direction:column;align-items:stretch;padding:16px}.operations-hint{padding:0 16px 16px}}
 
 .history-archive{margin-top:24px}
 .settings-grid{max-width:900px}.settings-card-header{padding:24px;border-bottom:1px solid var(--border)}.settings-list{padding:0 24px}.setting-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(160px,240px);gap:24px;align-items:center;padding:20px 0;border-bottom:1px solid var(--border)}.setting-row small{margin-top:4px}.setting-switch input{justify-self:end}.settings-footer{padding:24px}.settings-notice{color:var(--primary)}.chart-range{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px}.chart-range [aria-pressed=true]{background:#EAF3EE;color:var(--primary);border-color:#96B4A2}.sidebar-collapse{margin-top:24px}.sidebar-collapsed{grid-template-columns:72px minmax(0,1fr)}.sidebar-collapsed .sidebar{padding:24px 12px}.sidebar-collapsed .brand>span:last-child,.sidebar-collapsed .sidebar .nav-item span,.sidebar-collapsed .sidebar-bottom{display:none}.sidebar-collapsed .brand{justify-content:center}.sidebar-collapsed .nav-item{padding:12px;justify-content:center}.compact-mode td{padding-top:6px;padding-bottom:6px}@media(max-width:600px){.setting-row{grid-template-columns:1fr;gap:12px}.setting-switch{grid-template-columns:minmax(0,1fr) 24px}.settings-list{padding:0 16px}.settings-card-header,.settings-footer{padding:16px}.sidebar-collapsed{display:block}}
