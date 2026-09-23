@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 from contextlib import asynccontextmanager
 from datetime import datetime
+from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
@@ -36,6 +37,7 @@ from .repositories.database import (
 
 
 EDITOR_DATASETS = ('products', 'sales', 'stock', 'transit', 'stockouts', 'suppliers')
+DATA_DIR = Path(__file__).resolve().parents[1] / 'data'
 
 
 def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
@@ -70,40 +72,21 @@ class AppState:
         self.last_calculation = {}
         return {key: len(value) for key, value in self.datasets.items()}
 
+    def _load_bundled(self, filename: str) -> dict[str, int]:
+        path = DATA_DIR / filename
+        if not path.is_file():
+            return {}
+        self.datasets = ensure_product_catalog(parse_workbook(path.read_bytes()))
+        self.recommendations = []
+        self.outliers = []
+        self.last_calculation = {}
+        return {key: len(value) for key, value in self.datasets.items()}
+
     def load_ekt(self) -> dict[str, int]:
-        from pathlib import Path
-        data_paths = [
-            Path(__file__).parent.parent / "data" / "ekt_sales_and_stock_history.xlsx",
-            Path("c:/Users/олд/Desktop/Alema/data/ekt_sales_and_stock_history.xlsx"),
-            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_sales_and_stock_history.xlsx"),
-        ]
-        for p in data_paths:
-            if p.exists():
-                with open(p, "rb") as f:
-                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
-                    self.recommendations = []
-                    self.outliers = []
-                    self.last_calculation = {}
-                    return {key: len(value) for key, value in self.datasets.items()}
-        return {}
+        return self._load_bundled('ekt_sales_and_stock_history.xlsx')
 
     def load_anomalies(self) -> dict[str, int]:
-        from pathlib import Path
-        data_paths = [
-            Path(__file__).parent.parent / "data" / "ekt_extreme_anomalies_sales_and_stock.xlsx",
-            Path("data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-            Path("c:/Users/олд/Desktop/Alema/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-        ]
-        for p in data_paths:
-            if p.exists():
-                with open(p, "rb") as f:
-                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
-                    self.recommendations = []
-                    self.outliers = []
-                    self.last_calculation = {}
-                    return {key: len(value) for key, value in self.datasets.items()}
-        return {}
+        return self._load_bundled('ekt_extreme_anomalies_sales_and_stock.xlsx')
 
 
 state = AppState()
@@ -187,7 +170,7 @@ def load_ekt() -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     save_datasets_draft(state.datasets)
-    return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+    return {'message': 'Bundled synthetic ekt.kz case dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/load-anomalies')
@@ -200,7 +183,7 @@ def load_anomalies() -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     save_datasets_draft(state.datasets)
-    return {'message': 'Real-world extreme anomalies dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+    return {'message': 'Synthetic stress dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/upload-workbook')
