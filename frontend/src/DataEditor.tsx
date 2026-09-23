@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   clearEditorDraft,
   createEditorRow,
@@ -31,8 +31,8 @@ const DATASETS: Array<{ key: EditorDataset; label: string; description: string; 
   { key: 'stockouts', label: 'Дефициты', description: 'Периоды нулевого остатка', fields: [
     { key: 'sku', label: 'SKU', required: true }, { key: 'warehouse', label: 'Склад', required: true }, { key: 'start_date', label: 'Начало', type: 'date', required: true }, { key: 'end_date', label: 'Конец', type: 'date', required: true },
   ] },
-  { key: 'suppliers', label: 'Поставщики', description: 'Lead time, MOQ и упаковка', fields: [
-    { key: 'supplier_id', label: 'ID поставщика', required: true }, { key: 'supplier_name', label: 'Поставщик', required: true }, { key: 'sku', label: 'SKU', required: true }, { key: 'lead_time_days', label: 'Lead time, дней', type: 'number', required: true }, { key: 'moq', label: 'MOQ', type: 'number' }, { key: 'package_size', label: 'Упаковка', type: 'number' }, { key: 'unit_cost', label: 'Цена закупки', type: 'number' }, { key: 'minimum_order_value', label: 'Мин. сумма заказа', type: 'number' },
+  { key: 'suppliers', label: 'Поставщики', description: 'Сроки, минимальные партии и упаковка', fields: [
+    { key: 'supplier_id', label: 'ID поставщика', required: true }, { key: 'supplier_name', label: 'Поставщик', required: true }, { key: 'sku', label: 'SKU', required: true }, { key: 'lead_time_days', label: 'Срок поставки, дней', type: 'number', required: true }, { key: 'moq', label: 'Мин. партия', type: 'number' }, { key: 'package_size', label: 'Упаковка', type: 'number' }, { key: 'unit_cost', label: 'Цена закупки', type: 'number' }, { key: 'minimum_order_value', label: 'Мин. сумма заказа', type: 'number' },
   ] },
 ]
 
@@ -62,14 +62,18 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
   const [restored, setRestored] = useState(false)
   const [busy, setBusy] = useState(false)
   const [lookups, setLookups] = useState<Record<string, string[]>>({})
+  const loadSequence = useRef(0)
   const currentConfig = configFor(dataset)
 
   const loadRows = async () => {
+    const sequence = ++loadSequence.current
     try {
       const response = await getEditorRows(dataset, page * 50, 50, search)
+      if (sequence !== loadSequence.current) return
       setRows(response.rows)
       setTotal(response.total)
     } catch (error) {
+      if (sequence !== loadSequence.current) return
       onToast(error instanceof Error ? error.message : 'Не удалось загрузить данные')
     }
   }
@@ -103,7 +107,7 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
   const visibleFields = useMemo(() => currentConfig.fields.slice(0, 6), [currentConfig])
 
   const selectDataset = (next: EditorDataset) => {
-    setDataset(next); setPage(0); setSearch(''); setEditingId(null); setForm(defaultsFor(next)); setDirty(false); setRestored(false)
+    setRows([]); setTotal(0); setDataset(next); setPage(0); setSearch(''); setEditingId(null); setForm(defaultsFor(next)); setDirty(false); setRestored(false)
   }
 
   const startNew = () => { setEditingId(null); setForm(defaultsFor(dataset)); setDirty(false); setRestored(false) }
@@ -130,11 +134,11 @@ export default function DataEditor({ onToast, onRefresh }: { onToast: (message: 
   }
 
   return <section className="editor-page">
-    <div className="page-intro editor-intro"><div><p className="eyebrow">DATA WORKSPACE</p><h2>Редактор данных</h2><p>Создавайте товары, поставщиков и операции прямо в StockPilot. Черновик сохраняется автоматически.</p></div><div className="editor-status">{restored ? '↩ Черновик восстановлен' : '● Данные сохраняются в SQLite'}</div></div>
+    <div className="page-intro editor-intro"><div><p className="eyebrow">ИСХОДНЫЕ ДАННЫЕ</p><h2>Редактор данных</h2><p>Создавайте товары, поставщиков и операции прямо в StockPilot. Черновик сохраняется автоматически.</p></div><div className="editor-status">{restored ? '↩ Черновик восстановлен' : 'Изменения сохраняются на сервере'}</div></div>
     <div className="editor-tabs">{DATASETS.map(item => <button key={item.key} className={dataset === item.key ? 'editor-tab active' : 'editor-tab'} onClick={() => selectDataset(item.key)}><strong>{item.label}</strong><small>{item.description}</small></button>)}</div>
     <div className="editor-layout">
-      <div className="content-card editor-table-card"><div className="card-header"><div><p className="eyebrow">{currentConfig.label.toUpperCase()}</p><h3>Записи <span>{total}</span></h3></div><div className="header-actions"><div className="search editor-search"><span>⌕</span><input value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} placeholder="Найти…" /></div><a className="button subtle" href={editorExportUrl(dataset, 'xlsx')}>↓ XLSX</a><a className="button subtle" href={editorExportUrl(dataset, 'csv')}>↓ CSV</a><button className="button primary" onClick={startNew}>＋ Новая строка</button></div></div><div className="table-wrap"><table className="editor-table"><thead><tr>{visibleFields.map(field => <th key={field.key}>{field.label}</th>)}<th>Действия</th></tr></thead><tbody>{rows.map(row => <tr key={row.row_id}>{visibleFields.map(field => <td key={field.key}>{displayValue(row[field.key])}</td>)}<td><button className="table-action" onClick={() => editRow(row)}>Изменить</button><button className="table-action danger" onClick={() => remove(row.row_id)}>Удалить</button></td></tr>)}</tbody></table>{!rows.length && <div className="empty">Пока нет записей. Создайте первую строку.</div>}</div><div className="editor-pagination"><span>{total ? `${page * 50 + 1}–${Math.min((page + 1) * 50, total)} из ${total}` : '0 записей'}</span><div><button className="button subtle" disabled={page === 0} onClick={() => setPage(value => value - 1)}>←</button><button className="button subtle" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>→</button></div></div></div>
-      <div className="content-card editor-form-card"><div className="card-header"><div><p className="eyebrow">{editingId === null ? 'NEW RECORD' : 'EDIT RECORD'}</p><h3>{editingId === null ? 'Добавить строку' : 'Изменить строку'}</h3></div>{editingId !== null && <button className="close editor-close" onClick={startNew}>×</button>}</div><div className="editor-form">{currentConfig.fields.map(field => <label key={field.key} className="editor-field"><span>{field.label}{field.required && ' *'}</span>{field.type === 'checkbox' ? <input type="checkbox" checked={Boolean(form[field.key])} onChange={event => changeField(field, event.target.checked)} /> : <input type={field.type || 'text'} value={String(form[field.key] ?? '')} list={lookups[field.key] ? `lookup-${field.key}` : undefined} onChange={event => changeField(field, event.target.value)} />}{lookups[field.key] && <datalist id={`lookup-${field.key}`}>{lookups[field.key].map(value => <option key={value} value={value} />)}</datalist>}</label>)}<button className="button primary wide" onClick={save} disabled={busy}>{busy ? 'Сохраняем…' : editingId === null ? 'Сохранить строку' : 'Сохранить изменения'}</button><small className="editor-hint">Последнее состояние формы автоматически сохраняется как черновик каждые несколько секунд.</small></div></div>
+      <div className="content-card editor-table-card"><div className="card-header"><div><p className="eyebrow">{currentConfig.label.toUpperCase()}</p><h3>Записи <span>{total}</span></h3></div><div className="header-actions"><div className="search editor-search"><span>⌕</span><input value={search} onChange={event => { setSearch(event.target.value); setPage(0) }} aria-label="Поиск записей" placeholder="Найти…" /></div><a className="button subtle" href={editorExportUrl(dataset, 'xlsx')}>↓ XLSX</a><a className="button subtle" href={editorExportUrl(dataset, 'csv')}>↓ CSV</a><button className="button primary" onClick={startNew}>＋ Новая строка</button></div></div><div className="table-wrap"><table className="editor-table"><thead><tr>{visibleFields.map(field => <th key={field.key}>{field.label}</th>)}<th>Действия</th></tr></thead><tbody>{rows.map(row => <tr key={row.row_id}>{visibleFields.map(field => <td key={field.key} data-label={field.label}>{displayValue(row[field.key])}</td>)}<td data-label="Действия"><button className="table-action" onClick={() => editRow(row)}>Изменить</button><button className="table-action danger" onClick={() => remove(row.row_id)}>Удалить</button></td></tr>)}</tbody></table>{!rows.length && <div className="empty">Пока нет записей. Создайте первую строку.</div>}</div><div className="editor-pagination"><span>{total ? `${page * 50 + 1}–${Math.min((page + 1) * 50, total)} из ${total}` : '0 записей'}</span><div><button className="button subtle" disabled={page === 0} onClick={() => setPage(value => value - 1)}>←</button><button className="button subtle" disabled={(page + 1) * 50 >= total} onClick={() => setPage(value => value + 1)}>→</button></div></div></div>
+      <div className="content-card editor-form-card"><div className="card-header"><div><p className="eyebrow">{editingId === null ? 'НОВАЯ ЗАПИСЬ' : 'РЕДАКТИРОВАНИЕ'}</p><h3>{editingId === null ? 'Добавить строку' : 'Изменить строку'}</h3></div>{editingId !== null && <button className="close editor-close" onClick={startNew}>×</button>}</div><div className="editor-form">{currentConfig.fields.map(field => <label key={field.key} className="editor-field"><span>{field.label}{field.required && ' *'}</span>{field.type === 'checkbox' ? <input type="checkbox" checked={Boolean(form[field.key])} onChange={event => changeField(field, event.target.checked)} /> : <input type={field.type || 'text'} value={String(form[field.key] ?? '')} list={lookups[field.key] ? `lookup-${field.key}` : undefined} onChange={event => changeField(field, event.target.value)} />}{lookups[field.key] && <datalist id={`lookup-${field.key}`}>{lookups[field.key].map(value => <option key={value} value={value} />)}</datalist>}</label>)}<button className="button primary wide" onClick={save} disabled={busy}>{busy ? 'Сохраняем…' : editingId === null ? 'Сохранить строку' : 'Сохранить изменения'}</button><small className="editor-hint">Последнее состояние формы автоматически сохраняется как черновик каждые несколько секунд.</small></div></div>
     </div>
   </section>
 }
