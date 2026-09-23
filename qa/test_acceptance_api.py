@@ -159,6 +159,14 @@ def test_A16_duplicate_approval_does_not_create_extra_export_rows(client):
 
 
 def test_A17_russian_sales_csv_is_supported(client):
+    stock = pd.DataFrame([{
+        "Артикул": "EKT-CBL-001", "Склад": "Склад Астана (Главный РЦ)",
+        "Доступный_остаток": 20,
+    }])
+    prepared = client.post("/api/data/upload/stock", files={
+        "file": ("current_stock.csv", stock.to_csv(index=False).encode("utf-8-sig"), "text/csv"),
+    })
+    assert prepared.status_code == 200 and prepared.json()["rows_loaded"] == 1, prepared.text
     frame = pd.DataFrame([{
         "Дата_продажи": "2026-08-31", "Артикул": "EKT-CBL-001",
         "Наименование_товара": "Кабель", "Категория": "Кабель и провод",
@@ -193,3 +201,20 @@ def test_A19_empty_stockout_upload_clears_previous_windows(client):
     assert response.status_code == 200, response.text
     assert not response.json()["errors"], response.text
     assert main.state.datasets["stockouts"].empty, "Successful empty replacement kept the previous stockout windows"
+
+
+def test_A21_budget_tracks_final_order_quantity(client):
+    from app import main
+
+    main.state.datasets["suppliers"].loc[0, "unit_cost"] = 1000
+    calculated = client.post("/api/recommendations/calculate", json={})
+    assert calculated.status_code == 200, calculated.text
+    row = first_order(client)
+    assert row["unit_cost"] == 1000
+    assert row["total_cost_kzt"] == row["recommended_quantity"] * 1000
+
+    changed = client.post(path(row, "adjust"), json={"final_quantity": 36})
+    assert changed.status_code == 200, changed.text
+    body = client.get("/api/recommendations").json()
+    assert body["recommendations"][0]["total_cost_kzt"] == 36000
+    assert body["summary"]["total_budget_kzt"] == 36000
