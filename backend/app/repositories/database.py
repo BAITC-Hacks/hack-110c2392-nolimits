@@ -43,6 +43,26 @@ class EditorDraft(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
+class InventoryMovement(Base):
+    __tablename__ = 'inventory_movement'
+
+    id: Mapped[str] = mapped_column(String(60), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(24))
+    occurred_at: Mapped[str] = mapped_column(String(32))
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class ProductCatalog(Base):
+    __tablename__ = 'product_catalog'
+
+    sku: Mapped[str] = mapped_column(String(180), primary_key=True)
+    product_name: Mapped[str] = mapped_column(String(300))
+    category: Mapped[str] = mapped_column(String(180), default='Other')
+    unit_price: Mapped[float] = mapped_column(Float, default=0)
+    active: Mapped[bool] = mapped_column(default=True)
+
+
 engine = create_engine('sqlite:///./stockpilot.db', connect_args={'check_same_thread': False})
 
 
@@ -104,13 +124,64 @@ def _frame_records(frame: pd.DataFrame) -> list[dict[str, Any]]:
     return json.loads(frame.to_json(orient='records', date_format='iso'))
 
 
+def _upsert_catalog(session: Session, products: pd.DataFrame) -> None:
+    for row in _frame_records(products):
+        sku = str(row.get('sku') or '').strip()
+        if not sku:
+            continue
+        item = session.get(ProductCatalog, sku) or ProductCatalog(sku=sku)
+        item.product_name = str(row.get('product_name') or sku)
+        item.category = str(row.get('category') or 'Other')
+        item.unit_price = float(row.get('unit_price') or 0)
+        item.active = bool(row.get('active', True))
+        session.add(item)
+
+
+def load_product_catalog() -> pd.DataFrame:
+    with Session(engine) as session:
+        rows = session.scalars(select(ProductCatalog).order_by(ProductCatalog.sku)).all()
+        return pd.DataFrame([{'sku': row.sku, 'product_name': row.product_name,
+                              'category': row.category, 'unit_price': row.unit_price,
+                              'active': row.active} for row in rows],
+                            columns=['sku', 'product_name', 'category', 'unit_price', 'active'])
+
+
 def save_datasets_draft(datasets: dict[str, pd.DataFrame]) -> None:
     payload = {name: _frame_records(frame) for name, frame in datasets.items()}
     with Session(engine) as session:
         draft = session.get(EditorDraft, 'current') or EditorDraft(id='current')
         draft.datasets_json = json.dumps(payload, ensure_ascii=False)
         session.add(draft)
+        _upsert_catalog(session, datasets.get('products', pd.DataFrame()))
         session.commit()
+
+
+def save_inventory_movement(datasets: dict[str, pd.DataFrame], movement: dict[str, Any]) -> None:
+    payload = {name: _frame_records(frame) for name, frame in datasets.items()}
+    with Session(engine) as session:
+        if session.get(InventoryMovement, movement['id']):
+            raise ValueError('Movement already exists')
+        draft = session.get(EditorDraft, 'current') or EditorDraft(id='current')
+        draft.datasets_json = json.dumps(payload, ensure_ascii=False)
+        session.add(draft)
+        _upsert_catalog(session, datasets.get('products', pd.DataFrame()))
+        session.add(InventoryMovement(id=movement['id'], kind=movement['kind'],
+                                      occurred_at=movement['date'],
+                                      payload_json=json.dumps(movement, ensure_ascii=False)))
+        session.commit()
+
+
+def read_inventory_movement(movement_id: str) -> dict[str, Any] | None:
+    with Session(engine) as session:
+        row = session.get(InventoryMovement, movement_id)
+        return json.loads(row.payload_json) if row else None
+
+
+def read_inventory_movements(limit: int | None = 100) -> list[dict[str, Any]]:
+    with Session(engine) as session:
+        query = select(InventoryMovement).order_by(InventoryMovement.created_at.desc())
+        rows = session.scalars(query.limit(limit) if limit is not None else query).all()
+        return [json.loads(row.payload_json) for row in rows]
 
 
 def load_datasets_draft() -> dict[str, pd.DataFrame] | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -25,6 +26,27 @@ class EditorDraftPayload(BaseModel):
     dataset: str
     row: dict[str, Any] = Field(default_factory=dict)
     row_id: int | None = Field(default=None, ge=0)
+
+
+class MovementLine(BaseModel):
+    sku: str = Field(min_length=1)
+    product_name: str = ''
+    category: str = ''
+    quantity: float = Field(allow_inf_nan=False)
+    unit_price: float = Field(default=0, ge=0, allow_inf_nan=False)
+    recommendation_id: str | None = None
+
+
+class MovementRequest(BaseModel):
+    kind: Literal['PURCHASE', 'RECEIPT', 'SALE', 'TRANSFER', 'ADJUSTMENT', 'RETURN']
+    date: date
+    warehouse: str = Field(min_length=1)
+    destination_warehouse: str | None = None
+    partner: str = ''
+    reference: str = ''
+    expected_arrival_date: date | None = None
+    client_request_id: str | None = Field(default=None, max_length=60)
+    lines: list[MovementLine] = Field(min_length=1)
 
 
 class UploadResponse(BaseModel):

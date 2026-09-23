@@ -43,7 +43,7 @@ export default function App() {
     </aside>
     <main className="main"><header className="topbar"><div><p className="eyebrow">PURCHASING / WAREHOUSE CONTROL</p><h1>{page === 'overview' ? 'Replenishment Cockpit' : nav.find(item => item.key === page)?.label}</h1></div><div className="top-actions"><span className="date-chip">● Data through {summary.data_as_of || '—'}</span><button className="button subtle" onClick={demo} disabled={busy}>↻ Synthetic demo</button><button className="button primary" onClick={ekt} disabled={busy}>⚡️ ekt.kz Dataset (Казахстан)</button><button className="button" style={{ background: '#f59e0b', color: '#000', fontWeight: 600 }} onClick={anomalies} disabled={busy}>💥 Аномалии (Stress Test)</button></div></header>
       {page === 'overview' && <Overview rows={visibleRows} allRows={rows} summary={summary} search={search} setSearch={setSearch} urgency={urgency} setUrgency={setUrgency} warehouse={warehouse} setWarehouse={setWarehouse} supplier={supplier} setSupplier={setSupplier} category={category} setCategory={setCategory} warehouses={warehouses} sort={sort} setSort={setSort} onOpen={openSku} onRefresh={refresh} onToast={showToast} />}
-      {page === 'editor' && <DataEditor onToast={showToast} onRefresh={refresh} />}
+      {page === 'editor' && <DataEditor onToast={showToast} onRefresh={refresh} recommendations={rows} />}
       {page === 'imports' && <Imports onToast={showToast} onRefresh={refresh} onEkt={ekt} onAnomalies={anomalies} />}
       {page === 'anomalies' && <Anomalies onOpen={openSku} />}
     </main>

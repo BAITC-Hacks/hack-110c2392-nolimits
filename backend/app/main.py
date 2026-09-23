@@ -3,26 +3,33 @@ from __future__ import annotations
 import io
 from contextlib import asynccontextmanager
 from datetime import datetime
+from threading import RLock
+from uuid import uuid4
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .schemas import AdjustOrderRequest, CalculateRequest, EditorDraftPayload, EditorRowPayload
+from .schemas import AdjustOrderRequest, CalculateRequest, EditorDraftPayload, EditorRowPayload, MovementRequest
 from .services.demo import build_demo_data
 from .services.replenishment import calculate_recommendations, prepare_demand
 from .services.forecasting import forecast_series
+from .services.inventory import InventoryError, apply_movement
 from .services.validation import parse_workbook, read_table, validate_table
 from .repositories.database import (
     clear_editor_buffer,
     draft_updated_at,
     init_db,
     load_datasets_draft,
+    load_product_catalog,
     read_editor_buffer,
+    read_inventory_movement,
+    read_inventory_movements,
     read_order_history,
     save_datasets_draft,
     save_editor_buffer,
+    save_inventory_movement,
     save_recommendations,
     update_order,
 )
@@ -42,8 +49,10 @@ def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_product_catalog(datasets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    if 'products' not in datasets or datasets['products'].empty:
-        datasets['products'] = build_product_catalog(datasets.get('sales', pd.DataFrame()))
+    current = datasets.get('products', pd.DataFrame())
+    history = load_product_catalog()
+    sales = build_product_catalog(datasets.get('sales', pd.DataFrame()))
+    datasets['products'] = pd.concat([current, history, sales], ignore_index=True).drop_duplicates(subset=['sku'], keep='first').reset_index(drop=True)
     return datasets
 
 
@@ -98,6 +107,7 @@ class AppState:
 
 
 state = AppState()
+inventory_lock = RLock()
 
 
 @asynccontextmanager
@@ -211,6 +221,93 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
     save_datasets_draft(state.datasets)
     counts = {key: len(value) for key, value in state.datasets.items()}
     return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
+
+
+@app.get('/api/inventory/catalog')
+def inventory_catalog(search: str = '', limit: int | None = None) -> dict:
+    frame = state.datasets['products']
+    if search:
+        needle = search.casefold()
+        frame = frame[frame.astype(str).apply(lambda col: col.str.casefold().str.contains(needle, regex=False, na=False)).any(axis=1)]
+    total = len(frame)
+    if limit is not None:
+        frame = frame.head(min(max(limit, 1), 1000))
+    return {'products': _json_safe(frame.to_dict(orient='records')), 'total': total}
+
+
+@app.get('/api/inventory/stock')
+def inventory_stock(search: str = '') -> dict:
+    products = state.datasets['products']
+    stock = state.datasets['stock']
+    transit = state.datasets['transit']
+    rows: list[dict] = []
+    for item in products.to_dict(orient='records'):
+        sku = str(item['sku'])
+        balances = stock[stock['sku'].astype(str) == sku] if not stock.empty else pd.DataFrame()
+        inbound = transit[transit['sku'].astype(str) == sku] if not transit.empty else pd.DataFrame()
+        warehouses = sorted(set(balances.get('warehouse', pd.Series(dtype=str)).astype(str)) |
+                            set(inbound.get('warehouse', pd.Series(dtype=str)).astype(str))) or ['']
+        for warehouse in warehouses:
+            current = balances[balances['warehouse'].astype(str) == warehouse] if not balances.empty else pd.DataFrame()
+            incoming = inbound[inbound['warehouse'].astype(str) == warehouse] if not inbound.empty else pd.DataFrame()
+            rows.append({'sku': sku, 'product_name': item.get('product_name', sku),
+                         'category': item.get('category', ''), 'warehouse': warehouse,
+                         'current_stock': round(pd.to_numeric(current.get('current_stock', pd.Series(dtype=float)), errors='coerce').fillna(0).sum(), 2),
+                         'in_transit': round(pd.to_numeric(incoming.get('quantity_in_transit', pd.Series(dtype=float)), errors='coerce').fillna(0).sum(), 2),
+                         'unit_price': item.get('unit_price', 0)})
+    if search:
+        needle = search.casefold()
+        rows = [row for row in rows if needle in f"{row['sku']} {row['product_name']} {row['warehouse']}".casefold()]
+    return {'rows': _json_safe(rows), 'total': len(rows)}
+
+
+@app.get('/api/inventory/movements')
+def inventory_movements(limit: int = 100) -> dict:
+    rows = read_inventory_movements(min(max(limit, 1), 500))
+    return {'movements': rows, 'total': len(rows)}
+
+
+@app.post('/api/inventory/movements')
+def create_inventory_movement(request: MovementRequest) -> dict:
+    operation = request.model_dump(mode='json')
+    movement_id = operation.pop('client_request_id') or str(uuid4())
+    with inventory_lock:
+        existing = read_inventory_movement(movement_id)
+        if existing:
+            return {'movement': existing, 'recommendations': len(state.recommendations), 'replayed': True}
+        operation['id'] = movement_id
+        try:
+            candidate = apply_movement(state.datasets, operation)
+            recommendations, outliers = calculate_recommendations(candidate)
+        except (InventoryError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        save_inventory_movement(candidate, operation)
+        state.datasets = candidate
+        state.recommendations, state.outliers = recommendations, outliers
+        state.last_calculation = {}
+        save_recommendations(recommendations)
+        return {'movement': operation, 'recommendations': len(recommendations), 'replayed': False}
+
+
+@app.get('/api/inventory/export')
+def export_inventory() -> StreamingResponse:
+    buffer = io.BytesIO()
+    def spreadsheet_safe(value):
+        return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        for name in EDITOR_DATASETS:
+            frame = state.datasets[name].copy()
+            frame = frame.map(spreadsheet_safe)
+            frame.to_excel(writer, index=False, sheet_name=name)
+        movements = read_inventory_movements(None)
+        pd.DataFrame([{'id': item['id'], 'type': item['kind'], 'date': item['date'],
+                       'warehouse': item['warehouse'], 'destination': item.get('destination_warehouse'),
+                       'partner': item.get('partner'), 'reference': item.get('reference'),
+                       'sku': line['sku'], 'quantity': line['quantity'], 'unit_price': line['unit_price']}
+                      for item in movements for line in item['lines']]).map(spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             headers={'Content-Disposition': 'attachment; filename=stockpilot-current.xlsx'})
 
 
 def _require_editor_dataset(dataset: str) -> None:
