@@ -78,8 +78,10 @@ def apply_movement(datasets: dict[str, pd.DataFrame], operation: dict[str, Any])
 
     def consume_transit(sku: str, quantity: float) -> None:
         nonlocal transit
-        matching = transit.index[(transit['sku'].astype(str) == sku) &
-                                 (transit['warehouse'].astype(str) == warehouse)].tolist()
+        matching_rows = transit.loc[(transit['sku'].astype(str) == sku) &
+                                    (transit['warehouse'].astype(str) == warehouse)].copy()
+        matching_rows['_arrival'] = pd.to_datetime(matching_rows['expected_arrival_date'], errors='coerce')
+        matching = matching_rows.sort_values('_arrival').index.tolist()
         available = sum(_number(transit.at[index, 'quantity_in_transit']) for index in matching)
         if available + 1e-8 < quantity:
             raise InventoryError(f'Для поступления {sku} в пути только {available:g}, запрошено {quantity:g}')

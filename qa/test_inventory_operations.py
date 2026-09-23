@@ -4,8 +4,8 @@ from io import BytesIO
 import pandas as pd
 
 
-def operation(kind, lines, *, request_id, warehouse='ASTANA', partner='', destination=None, arrival=None):
-    return {'kind': kind, 'date': '2026-09-23', 'warehouse': warehouse,
+def operation(kind, lines, *, request_id, warehouse='ASTANA', partner='', destination=None, arrival=None, date='2026-09-23'):
+    return {'kind': kind, 'date': date, 'warehouse': warehouse,
             'destination_warehouse': destination, 'partner': partner,
             'expected_arrival_date': arrival, 'reference': request_id,
             'client_request_id': request_id, 'lines': lines}
@@ -64,3 +64,16 @@ def test_purchase_receipt_sale_transfer_and_export_survive_restart(api_factory):
         assert len(client.get('/api/inventory/movements').json()['movements']) == 6
         client.post('/api/data/demo')
         assert 'NEW-A' in {item['sku'] for item in client.get('/api/inventory/catalog').json()['products']}
+
+
+def test_purchase_reduces_recommendation_before_receipt(api_factory):
+    with api_factory() as client:
+        before = next(row for row in client.get('/api/recommendations').json()['recommendations'] if row['sku'] == 'QA-001')
+        response = client.post('/api/inventory/movements', json=operation(
+            'PURCHASE', [line('QA-001', 1000)], request_id='inbound-qa', partner='QA-SUP',
+            arrival='2026-03-27', date='2026-03-26'))
+        assert response.status_code == 200, response.text
+        after = next(row for row in client.get('/api/recommendations').json()['recommendations'] if row['sku'] == 'QA-001')
+        assert after['recommended_quantity'] < before['recommended_quantity']
+        assert balance(client, 'QA-001', 'ASTANA')['current_stock'] == 0
+        assert balance(client, 'QA-001', 'ASTANA')['in_transit'] == 1000
