@@ -33,6 +33,16 @@ def test_ekt_endpoint_loads_bundled_dataset_and_recalculates():
     assert body['recommendations'] > 0
 
 
+def test_load_anomalies_endpoint_loads_and_recalculates():
+    with TestClient(app) as client:
+        response = client.post('/api/data/load-anomalies')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['datasets']['sales'] > 0
+    assert body['recommendations'] > 0
+    assert body['outliers'] > 0
+
+
 def test_orders_export_returns_csv_with_expected_headers():
     with TestClient(app) as client:
         response = client.get('/api/orders/export?format=csv')
