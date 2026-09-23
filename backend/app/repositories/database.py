@@ -70,23 +70,29 @@ def init_db() -> None:
     Base.metadata.create_all(engine)
 
 
+def _save_recommendations(session: Session, rows: list[dict]) -> None:
+    for row in rows:
+        audit = session.get(OrderAudit, row['id']) or OrderAudit(id=row['id'])
+        prior_metadata = json.loads(audit.calculation_metadata or '{}')
+        prior_signature = prior_metadata.get('calculation_signature', prior_metadata.get('dataset_signature'))
+        current_signature = row['metadata'].get('calculation_signature', row['metadata'].get('dataset_signature'))
+        same_calculation = prior_signature == current_signature
+        if audit.status in {'ADJUSTED', 'APPROVED'} and same_calculation:
+            row['status'] = audit.status
+            row['final_quantity'] = audit.final_quantity
+            row['total_cost_kzt'] = round(audit.final_quantity * row['unit_cost'], 2)
+            continue
+        if audit.status in {'ADJUSTED', 'APPROVED'} and not same_calculation:
+            session.add(OrderHistory(order_id=audit.id, status=audit.status, final_quantity=audit.final_quantity, calculation_metadata=audit.calculation_metadata))
+        audit.status = row['status']
+        audit.final_quantity = row['final_quantity']
+        audit.calculation_metadata = json.dumps(row['metadata'], default=str)
+        session.add(audit)
+
+
 def save_recommendations(rows: list[dict]) -> None:
     with Session(engine) as session:
-        for row in rows:
-            audit = session.get(OrderAudit, row['id']) or OrderAudit(id=row['id'])
-            prior_metadata = json.loads(audit.calculation_metadata or '{}')
-            same_dataset = prior_metadata.get('dataset_signature') == row['metadata'].get('dataset_signature')
-            if audit.status in {'ADJUSTED', 'APPROVED'} and same_dataset:
-                row['status'] = audit.status
-                row['final_quantity'] = audit.final_quantity
-                row['total_cost_kzt'] = round(audit.final_quantity * row['unit_cost'], 2)
-                continue
-            if audit.status in {'ADJUSTED', 'APPROVED'} and not same_dataset:
-                session.add(OrderHistory(order_id=audit.id, status=audit.status, final_quantity=audit.final_quantity, calculation_metadata=audit.calculation_metadata))
-            audit.status = row['status']
-            audit.final_quantity = row['final_quantity']
-            audit.calculation_metadata = json.dumps(row['metadata'], default=str)
-            session.add(audit)
+        _save_recommendations(session, rows)
         session.commit()
 
 
@@ -146,17 +152,19 @@ def load_product_catalog() -> pd.DataFrame:
                             columns=['sku', 'product_name', 'category', 'unit_price', 'active'])
 
 
-def save_datasets_draft(datasets: dict[str, pd.DataFrame]) -> None:
+def save_datasets_draft(datasets: dict[str, pd.DataFrame], recommendations: list[dict] | None = None) -> None:
     payload = {name: _frame_records(frame) for name, frame in datasets.items()}
     with Session(engine) as session:
         draft = session.get(EditorDraft, 'current') or EditorDraft(id='current')
         draft.datasets_json = json.dumps(payload, ensure_ascii=False)
         session.add(draft)
         _upsert_catalog(session, datasets.get('products', pd.DataFrame()))
+        if recommendations is not None:
+            _save_recommendations(session, recommendations)
         session.commit()
 
 
-def save_inventory_movement(datasets: dict[str, pd.DataFrame], movement: dict[str, Any]) -> None:
+def save_inventory_movement(datasets: dict[str, pd.DataFrame], movement: dict[str, Any], recommendations: list[dict] | None = None) -> None:
     payload = {name: _frame_records(frame) for name, frame in datasets.items()}
     with Session(engine) as session:
         if session.get(InventoryMovement, movement['id']):
@@ -168,6 +176,8 @@ def save_inventory_movement(datasets: dict[str, pd.DataFrame], movement: dict[st
         session.add(InventoryMovement(id=movement['id'], kind=movement['kind'],
                                       occurred_at=movement['date'],
                                       payload_json=json.dumps(movement, ensure_ascii=False)))
+        if recommendations is not None:
+            _save_recommendations(session, recommendations)
         session.commit()
 
 
