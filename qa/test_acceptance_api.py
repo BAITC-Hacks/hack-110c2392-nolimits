@@ -59,6 +59,21 @@ def test_mixed_valid_invalid_stock_upload_is_atomic(client):
     pd.testing.assert_frame_equal(main.state.datasets['stock'], before, check_dtype=False)
 
 
+def test_empty_sales_history_and_stock_survive_restart(api_factory):
+    with api_factory() as client:
+        changed = client.patch('/api/editor/stock/rows/0', json={'row': {'current_stock': 17}})
+        assert changed.status_code == 200, changed.text
+        empty_sales = b'date,sku,product_name,category,quantity,price,customer_id,warehouse\n'
+        uploaded = client.post('/api/data/upload/sales', files={'file': ('sales.csv', empty_sales, 'text/csv')})
+        assert uploaded.status_code == 200, uploaded.text
+        assert client.get('/api/data/status').json()['datasets']['sales'] == 0
+
+    with api_factory() as restarted:
+        assert restarted.get('/api/data/status').json()['datasets']['sales'] == 0
+        stock = restarted.get('/api/inventory/stock').json()['rows']
+        assert next(row for row in stock if row['sku'] == 'QA-001' and row['warehouse'] == 'ASTANA')['current_stock'] == 17
+
+
 def test_editor_exports_keep_untrusted_text_as_text(client):
     from app import main
 

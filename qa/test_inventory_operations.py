@@ -1,5 +1,7 @@
 """A real multi-item checkout through the API, using a disposable SQLite DB."""
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from io import BytesIO
+from threading import Event
 
 import pandas as pd
 
@@ -90,3 +92,36 @@ def test_reused_request_id_with_changed_cart_is_rejected(api_factory):
         assert response.status_code == 409, response.text
         assert balance(client, 'IDEMPOTENT', 'ASTANA')['in_transit'] == 2
         assert len(client.get('/api/inventory/movements').json()['movements']) == 1
+
+
+def test_editor_cannot_overwrite_a_concurrent_stock_movement(api_factory, monkeypatch):
+    from app import main
+
+    with api_factory() as client:
+        main.state.datasets['stock'].at[0, 'current_stock'] = 10
+        monkeypatch.setattr(main, 'calculate_recommendations', lambda *_args, **_kwargs: ([], []))
+        real_editor_frame = main._editor_frame
+        editor_paused = Event()
+        release_editor = Event()
+
+        def pause_after_snapshot(dataset, rows):
+            editor_paused.set()
+            assert release_editor.wait(10)
+            return real_editor_frame(dataset, rows)
+
+        monkeypatch.setattr(main, '_editor_frame', pause_after_snapshot)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            editor = executor.submit(client.post, '/api/editor/stock/rows', json={
+                'row': {'sku': 'QA-001', 'warehouse': 'ALMATY', 'current_stock': 0}})
+            assert editor_paused.wait(5)
+            movement = executor.submit(client.post, '/api/inventory/movements', json=operation(
+                'ADJUSTMENT', [line('QA-001', -1)], request_id='concurrent-adjust'))
+            try:
+                movement.result(timeout=2)
+            except TimeoutError:
+                pass
+            finally:
+                release_editor.set()
+            assert editor.result(timeout=10).status_code == 200
+            assert movement.result(timeout=10).status_code == 200
+        assert balance(client, 'QA-001', 'ASTANA')['current_stock'] == 9
