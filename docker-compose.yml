@@ -1,13 +1,18 @@
 services:
   api:
     build: ./backend
+    environment:
+      STOCKPILOT_DB_URL: sqlite:////app/storage/stockpilot.db
     ports:
       - "8000:8000"
     volumes:
-      - ./backend:/app
+      - stockpilot_data:/app/storage
   web:
     build: ./frontend
     ports:
       - "5173:5173"
     depends_on:
       - api
+
+volumes:
+  stockpilot_data:

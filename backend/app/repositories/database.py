@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -63,7 +64,7 @@ class ProductCatalog(Base):
     active: Mapped[bool] = mapped_column(default=True)
 
 
-engine = create_engine('sqlite:///./stockpilot.db', connect_args={'check_same_thread': False})
+engine = create_engine(os.getenv('STOCKPILOT_DB_URL', 'sqlite:///./stockpilot.db'), connect_args={'check_same_thread': False})
 
 
 def init_db() -> None:

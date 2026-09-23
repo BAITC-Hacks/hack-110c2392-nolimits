@@ -7,6 +7,9 @@ export const money = (value?: number | null) => value == null ? 'Нет цены
 export const warehouseName = (value: string) => ({ 'WH-CENTRAL': 'Центральный склад', 'WH-NORTH': 'Северный склад', 'WH-SOUTH': 'Южный склад' }[value] || value)
 export const riskLabels: Record<Urgency, string> = { CRITICAL: 'Критический', HIGH: 'Высокий', MEDIUM: 'Средний', LOW: 'Плановый' }
 export const statusLabels: Record<Status, string> = { DRAFT: 'Черновик', ADJUSTED: 'Изменено', APPROVED: 'Утверждено' }
+export function BrandMark({ decorative = false }: { decorative?: boolean }) {
+  return <img className="brand-mark" src={`${import.meta.env.BASE_URL}basqar-mark.svg`} alt={decorative ? '' : 'Basqar'} width="40" height="40" />
+}
 export function Badge({ value }: { value: Urgency | Status }) { return <span className={`badge ${value.toLowerCase()}`}>{translateText(value in riskLabels ? riskLabels[value as Urgency] : statusLabels[value as Status])}</span> }
 export function Icon({ name }: { name: string }) {
   const paths: Record<string, ReactNode> = {
@@ -26,7 +29,7 @@ export function Icon({ name }: { name: string }) {
   }
   return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name] || paths.plan}</svg>
 }
-export function Modal({ title, children, onClose, className = '' }: { title: string; children: ReactNode; onClose: () => void; className?: string }) {
+export function Modal({ title, children, onClose, className = '', icon }: { title: string; children: ReactNode; onClose: () => void; className?: string; icon?: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null)
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null
@@ -36,6 +39,6 @@ export function Modal({ title, children, onClose, className = '' }: { title: str
     return () => { ref.current?.close(); document.body.style.overflow = before; previous?.focus() }
   }, [])
   return <dialog ref={ref} className={`modal ${className}`} aria-label={translateText(title)} onCancel={event => { event.preventDefault(); onClose() }}>
-    <div className="modal-header"><h2>{translateText(title)}</h2><button className="icon-button" aria-label={translateText("Закрыть")} onClick={onClose}><Icon name="close"/></button></div>{children}
+    <div className="modal-header"><h2>{icon}{translateText(title)}</h2><button className="icon-button" aria-label={translateText("Закрыть")} onClick={onClose}><Icon name="close"/></button></div>{children}
   </dialog>
 }

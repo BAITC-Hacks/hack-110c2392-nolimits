@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 432 448">
+  <defs>
+    <linearGradient id="upper" x1="48" y1="150" x2="378" y2="68" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00241c"/>
+      <stop offset=".55" stop-color="#00674f"/>
+      <stop offset="1" stop-color="#4cb893"/>
+    </linearGradient>
+    <linearGradient id="lower" x1="86" y1="428" x2="334" y2="220" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#001b16"/>
+      <stop offset=".52" stop-color="#00604b"/>
+      <stop offset="1" stop-color="#51b997"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="40" y1="350" x2="277" y2="158" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00110e"/>
+      <stop offset=".52" stop-color="#005542"/>
+      <stop offset="1" stop-color="#80ceaa"/>
+    </linearGradient>
+    <linearGradient id="foot" x1="48" y1="428" x2="384" y2="339" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#00110e"/>
+      <stop offset="1" stop-color="#00533f"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#lower)" d="M237 204c88 0 177 48 177 124 0 56-48 104-114 104H62c-11 0-16-5-16-15V302c0-57 98-98 191-98Z"/>
+  <path fill="url(#upper)" d="M58 16h227c66 0 125 52 125 119 0 53-40 87-91 122L161 363 18 421V317c0-75 125-133 247-153H58c-10 0-14-5-14-15V31c0-10 4-15 14-15Z"/>
+  <path fill="#002d22" opacity=".75" d="M58 16 265 164H58c-10 0-14-5-14-15V31c0-10 4-15 14-15Z"/>
+  <path fill="url(#fold)" d="M18 317c0-75 125-133 247-153h19L18 421Z"/>
+  <path fill="url(#foot)" d="M160 323c110-24 196 3 226 73-23 23-49 36-86 36H62c-11 0-16-5-16-15Z"/>
+  <path fill="#f9faf6" d="M18 421c47-85 138-180 258-261l-28-24c-3-3-2-6 2-7l118-25c4-1 5 1 4 5l-58 126c-1 4-4 4-5 0l-13-40C183 269 95 344 47 428c-7 8-20 3-29-7Z"/>
+</svg>

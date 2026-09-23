@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 from contextlib import asynccontextmanager
 from datetime import datetime
+from functools import wraps
+from pathlib import Path
 from threading import RLock
 from uuid import uuid4
 
@@ -36,6 +38,12 @@ from .repositories.database import (
 
 
 EDITOR_DATASETS = ('products', 'sales', 'stock', 'transit', 'stockouts', 'suppliers')
+DATA_DIR = Path(__file__).resolve().parents[1] / 'data'
+
+
+def _spreadsheet_safe(value):
+    """Keep untrusted text from becoming a formula in Excel or CSV viewers."""
+    return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
 
 
 def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
@@ -70,52 +78,43 @@ class AppState:
         self.last_calculation = {}
         return {key: len(value) for key, value in self.datasets.items()}
 
+    def _load_bundled(self, filename: str) -> dict[str, int]:
+        path = DATA_DIR / filename
+        if not path.is_file():
+            return {}
+        self.datasets = ensure_product_catalog(parse_workbook(path.read_bytes()))
+        self.recommendations = []
+        self.outliers = []
+        self.last_calculation = {}
+        return {key: len(value) for key, value in self.datasets.items()}
+
     def load_ekt(self) -> dict[str, int]:
-        from pathlib import Path
-        data_paths = [
-            Path(__file__).parent.parent / "data" / "ekt_sales_and_stock_history.xlsx",
-            Path("c:/Users/олд/Desktop/Alema/data/ekt_sales_and_stock_history.xlsx"),
-            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_sales_and_stock_history.xlsx"),
-        ]
-        for p in data_paths:
-            if p.exists():
-                with open(p, "rb") as f:
-                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
-                    self.recommendations = []
-                    self.outliers = []
-                    self.last_calculation = {}
-                    return {key: len(value) for key, value in self.datasets.items()}
-        return {}
+        return self._load_bundled('ekt_sales_and_stock_history.xlsx')
 
     def load_anomalies(self) -> dict[str, int]:
-        from pathlib import Path
-        data_paths = [
-            Path(__file__).parent.parent / "data" / "ekt_extreme_anomalies_sales_and_stock.xlsx",
-            Path("data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-            Path("c:/Users/олд/Desktop/Alema/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
-        ]
-        for p in data_paths:
-            if p.exists():
-                with open(p, "rb") as f:
-                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
-                    self.recommendations = []
-                    self.outliers = []
-                    self.last_calculation = {}
-                    return {key: len(value) for key, value in self.datasets.items()}
-        return {}
+        return self._load_bundled('ekt_extreme_anomalies_sales_and_stock.xlsx')
 
 
 state = AppState()
 inventory_lock = RLock()
 
 
+def synchronized_inventory(func):
+    """Serialize writes that derive new state from the current inventory."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        with inventory_lock:
+            return func(*args, **kwargs)
+    return wrapper
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
     restored = load_datasets_draft()
-    state.datasets = ensure_product_catalog(restored) if restored and not restored.get('sales', pd.DataFrame()).empty else state.datasets
-    if state.datasets.get('sales', pd.DataFrame()).empty:
+    if restored is not None:
+        state.datasets = ensure_product_catalog({name: restored.get(name, pd.DataFrame()) for name in EDITOR_DATASETS})
+    else:
         state.load_demo()
     state.recommendations, state.outliers = calculate_recommendations(state.datasets)
     save_recommendations(state.recommendations)
@@ -138,6 +137,7 @@ def data_status() -> dict:
 
 
 @app.post('/api/data/demo')
+@synchronized_inventory
 def load_demo() -> dict:
     counts = state.load_demo()
     recs, outliers = calculate_recommendations(state.datasets)
@@ -157,27 +157,31 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
         frame = read_table(raw, file.filename or 'upload.csv')
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not read {file.filename}: {exc}') from exc
-    known_skus = set(state.datasets['sales'].get('sku', pd.Series(dtype=str)).dropna().astype(str))
-    # Tables may be uploaded in any order; the current demo's warehouses are
-    # not authoritative for a new import session.
-    cleaned, errors, warnings = validate_table(dataset, frame, known_skus=known_skus)
-    if len(cleaned) or (frame.empty and not errors):
-        state.datasets[dataset] = cleaned
-        state.datasets = ensure_product_catalog(state.datasets)
-        state.recommendations, state.outliers = calculate_recommendations(state.datasets)
-        save_recommendations(state.recommendations)
-        save_datasets_draft(state.datasets)
-    return {
-        'dataset': dataset,
-        'rows_loaded': len(cleaned),
-        'errors': errors,
-        'warnings': warnings,
-        'recommendations': len(state.recommendations),
-        'outliers': len(state.outliers),
-    }
+    with inventory_lock:
+        known_skus = set(state.datasets['sales'].get('sku', pd.Series(dtype=str)).dropna().astype(str))
+        # Tables may be uploaded in any order; the current demo's warehouses are
+        # not authoritative for a new import session.
+        cleaned, errors, warnings = validate_table(dataset, frame, known_skus=known_skus)
+        if errors:
+            raise HTTPException(status_code=422, detail={'errors': errors, 'warnings': warnings})
+        if len(cleaned) or frame.empty:
+            state.datasets[dataset] = cleaned
+            state.datasets = ensure_product_catalog(state.datasets)
+            state.recommendations, state.outliers = calculate_recommendations(state.datasets)
+            save_recommendations(state.recommendations)
+            save_datasets_draft(state.datasets)
+        return {
+            'dataset': dataset,
+            'rows_loaded': len(cleaned),
+            'errors': errors,
+            'warnings': warnings,
+            'recommendations': len(state.recommendations),
+            'outliers': len(state.outliers),
+        }
 
 
 @app.post('/api/data/load-ekt')
+@synchronized_inventory
 def load_ekt() -> dict:
     counts = state.load_ekt()
     if not counts:
@@ -187,10 +191,11 @@ def load_ekt() -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     save_datasets_draft(state.datasets)
-    return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+    return {'message': 'Bundled synthetic ekt.kz case dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/load-anomalies')
+@synchronized_inventory
 def load_anomalies() -> dict:
     counts = state.load_anomalies()
     if not counts:
@@ -200,7 +205,7 @@ def load_anomalies() -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     save_datasets_draft(state.datasets)
-    return {'message': 'Real-world extreme anomalies dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+    return {'message': 'Synthetic stress dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/upload-workbook')
@@ -210,17 +215,18 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
         datasets, errors, warnings = parse_workbook(raw, include_report=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
-    if errors or datasets['sales'].empty:
-        raise HTTPException(status_code=422, detail={'errors': errors or ['Workbook has no usable sales history']})
-    state.datasets = ensure_product_catalog(datasets)
-    state.last_calculation = {}
-    recs, outliers = calculate_recommendations(state.datasets)
-    state.recommendations = recs
-    state.outliers = outliers
-    save_recommendations(recs)
-    save_datasets_draft(state.datasets)
-    counts = {key: len(value) for key, value in state.datasets.items()}
-    return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
+    with inventory_lock:
+        if errors or datasets['sales'].empty:
+            raise HTTPException(status_code=422, detail={'errors': errors or ['Workbook has no usable sales history']})
+        state.datasets = ensure_product_catalog(datasets)
+        state.last_calculation = {}
+        recs, outliers = calculate_recommendations(state.datasets)
+        state.recommendations = recs
+        state.outliers = outliers
+        save_recommendations(recs)
+        save_datasets_draft(state.datasets)
+        counts = {key: len(value) for key, value in state.datasets.items()}
+        return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
 
 
 @app.get('/api/inventory/catalog')
@@ -271,11 +277,13 @@ def inventory_movements(limit: int = 100) -> dict:
 def create_inventory_movement(request: MovementRequest) -> dict:
     operation = request.model_dump(mode='json')
     movement_id = operation.pop('client_request_id') or str(uuid4())
+    operation['id'] = movement_id
     with inventory_lock:
         existing = read_inventory_movement(movement_id)
         if existing:
+            if existing != operation:
+                raise HTTPException(status_code=409, detail='Этот ID операции уже использован для другого документа')
             return {'movement': existing, 'recommendations': len(state.recommendations), 'replayed': True}
-        operation['id'] = movement_id
         try:
             candidate = apply_movement(state.datasets, operation)
             recommendations, outliers = calculate_recommendations(candidate)
@@ -292,19 +300,17 @@ def create_inventory_movement(request: MovementRequest) -> dict:
 @app.get('/api/inventory/export')
 def export_inventory() -> StreamingResponse:
     buffer = io.BytesIO()
-    def spreadsheet_safe(value):
-        return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
         for name in EDITOR_DATASETS:
             frame = state.datasets[name].copy()
-            frame = frame.map(spreadsheet_safe)
+            frame = frame.map(_spreadsheet_safe)
             frame.to_excel(writer, index=False, sheet_name=name)
         movements = read_inventory_movements(None)
         pd.DataFrame([{'id': item['id'], 'type': item['kind'], 'date': item['date'],
                        'warehouse': item['warehouse'], 'destination': item.get('destination_warehouse'),
                        'partner': item.get('partner'), 'reference': item.get('reference'),
                        'sku': line['sku'], 'quantity': line['quantity'], 'unit_price': line['unit_price']}
-                      for item in movements for line in item['lines']]).map(spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
+                      for item in movements for line in item['lines']]).map(_spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
     buffer.seek(0)
     return StreamingResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
                              headers={'Content-Disposition': 'attachment; filename=stockpilot-current.xlsx'})
@@ -392,7 +398,7 @@ def export_editor_dataset(dataset: str, format: str = 'xlsx') -> StreamingRespon
     normalized_format = format.lower()
     if normalized_format not in {'csv', 'xlsx'}:
         raise HTTPException(status_code=400, detail="Export format must be 'csv' or 'xlsx'")
-    frame = state.datasets[dataset]
+    frame = state.datasets[dataset].map(_spreadsheet_safe)
     filename = f'stockpilot-{dataset}'
     if normalized_format == 'xlsx':
         buffer = io.BytesIO()
@@ -404,6 +410,7 @@ def export_editor_dataset(dataset: str, format: str = 'xlsx') -> StreamingRespon
 
 
 @app.post('/api/editor/{dataset}/rows')
+@synchronized_inventory
 def create_editor_row(dataset: str, payload: EditorRowPayload) -> dict:
     _require_editor_dataset(dataset)
     current = state.datasets.get(dataset, pd.DataFrame()).copy()
@@ -415,6 +422,7 @@ def create_editor_row(dataset: str, payload: EditorRowPayload) -> dict:
 
 
 @app.patch('/api/editor/{dataset}/rows/{row_id}')
+@synchronized_inventory
 def update_editor_row(dataset: str, row_id: int, payload: EditorRowPayload) -> dict:
     _require_editor_dataset(dataset)
     current = state.datasets.get(dataset, pd.DataFrame()).copy()
@@ -430,6 +438,7 @@ def update_editor_row(dataset: str, row_id: int, payload: EditorRowPayload) -> d
 
 
 @app.delete('/api/editor/{dataset}/rows/{row_id}')
+@synchronized_inventory
 def delete_editor_row(dataset: str, row_id: int) -> dict:
     _require_editor_dataset(dataset)
     current = state.datasets.get(dataset, pd.DataFrame()).copy()
@@ -442,6 +451,7 @@ def delete_editor_row(dataset: str, row_id: int) -> dict:
 
 
 @app.post('/api/recommendations/calculate')
+@synchronized_inventory
 def calculate(request: CalculateRequest = CalculateRequest()) -> dict:
     recommendations, outliers = calculate_recommendations(state.datasets, request.warehouse, request.category, request.safety_days, request.service_factor, request.outlier_threshold)
     state.recommendations = recommendations
@@ -506,6 +516,7 @@ def outliers() -> dict:
 
 
 @app.post('/api/orders/{order_id}/adjust')
+@synchronized_inventory
 def adjust_order(order_id: str, request: AdjustOrderRequest) -> dict:
     row = next((item for item in state.recommendations if item['id'] == order_id), None)
     if not row:
@@ -523,6 +534,7 @@ def order_history() -> dict:
 
 
 @app.post('/api/orders/{order_id}/approve')
+@synchronized_inventory
 def approve_order(order_id: str) -> dict:
     row = next((item for item in state.recommendations if item['id'] == order_id), None)
     if not row:
@@ -565,11 +577,7 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
         'Explanation': 'explanation',
         'Status': 'status'
     }
-    def spreadsheet_safe(value):
-        if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')):
-            return "'" + value
-        return value
-    frame = pd.DataFrame([{label: spreadsheet_safe(row.get(key)) for label, key in columns.items()} for row in state.recommendations])
+    frame = pd.DataFrame([{label: _spreadsheet_safe(row.get(key)) for label, key in columns.items()} for row in state.recommendations])
     if normalized_format == 'xlsx':
         buffer = io.BytesIO()
         frame.to_excel(buffer, index=False)
