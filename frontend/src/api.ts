@@ -6,7 +6,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     const detail = body.detail
-    const message = typeof detail === 'object' ? [detail.message, ...(detail.errors || []), ...(detail.warnings || [])].filter(Boolean).join(' · ') : detail
+    const message = typeof detail === 'string' ? detail
+      : Array.isArray(detail) ? detail.map(item => item.msg || String(item)).join(' · ')
+      : detail && typeof detail === 'object' ? [detail.message, ...(Array.isArray(detail.errors) ? detail.errors : []), ...(Array.isArray(detail.warnings) ? detail.warnings : [])].filter(Boolean).join(' · ')
+      : 'Request failed'
     throw new Error(message || 'Request failed')
   }
   return response.json()
@@ -36,3 +39,15 @@ export async function updateEditorRow(dataset: EditorDataset, rowId: number, row
 export async function deleteEditorRow(dataset: EditorDataset, rowId: number) { return request<{ rows: number; recommendations: number; outliers: number; warnings: string[] }>(`/api/editor/${dataset}/rows/${rowId}`, { method: 'DELETE' }) }
 export async function saveEditorDraft(dataset: EditorDataset, row: Record<string, unknown>, rowId: number | null) { return request<{ saved: boolean; draft: EditorDraft; updated_at: string | null }>('/api/editor/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dataset, row, row_id: rowId }) }) }
 export async function clearEditorDraft() { return request<{ deleted: boolean }>('/api/editor/draft', { method: 'DELETE' }) }
+
+export type MovementKind = 'PURCHASE' | 'RECEIPT' | 'SALE' | 'TRANSFER' | 'ADJUSTMENT' | 'RETURN'
+export interface MovementLine { sku: string; product_name: string; category: string; quantity: number; unit_price: number; recommendation_id?: string }
+export interface MovementInput { kind: MovementKind; date: string; warehouse: string; destination_warehouse?: string; partner: string; reference: string; expected_arrival_date?: string; client_request_id: string; lines: MovementLine[] }
+export interface Movement extends MovementInput { id: string }
+export interface CatalogProduct { sku: string; product_name: string; category: string; unit_price: number; active: boolean }
+export interface StockRow { sku: string; product_name: string; category: string; warehouse: string; current_stock: number; in_transit: number; unit_price: number }
+export async function getInventoryCatalog(search = '') { return request<{ products: CatalogProduct[]; total: number }>(`/api/inventory/catalog?search=${encodeURIComponent(search)}`) }
+export async function getInventoryStock(search = '') { return request<{ rows: StockRow[]; total: number }>(`/api/inventory/stock?search=${encodeURIComponent(search)}`) }
+export async function getInventoryMovements() { return request<{ movements: Movement[]; total: number }>('/api/inventory/movements?limit=200') }
+export async function postInventoryMovement(input: MovementInput) { return request<{ movement: Movement; recommendations: number; replayed: boolean }>('/api/inventory/movements', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }) }
+export function inventoryExportUrl() { return `${API}/api/inventory/export` }

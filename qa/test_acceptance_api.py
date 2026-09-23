@@ -19,8 +19,12 @@ def path(row, action):
 
 
 def test_A01_health_and_startup(client):
+    from app import main
+
     assert client.get("/health").status_code == 200
     assert first_order(client)["status"] == "DRAFT"
+    as_of = main.state.datasets['sales']['date'].max().strftime('%Y-%m-%d')
+    assert client.get('/api/recommendations').json()['summary']['data_as_of'] == as_of
 
 
 @pytest.mark.parametrize("payload", [
@@ -66,6 +70,18 @@ def test_A07_restart_restores_approved_decision(api_factory):
     with api_factory() as restarted:
         row = first_order(restarted)
         assert (row["status"], row["final_quantity"]) == ("APPROVED", 36), row
+
+
+def test_new_dataset_does_not_inherit_stale_approval(client):
+    from app import main
+
+    row = first_order(client)
+    assert client.post(path(row, 'approve')).status_code == 200
+    main.state.datasets['stock'].loc[0, 'current_stock'] += 1
+    assert client.post('/api/recommendations/calculate', json={}).status_code == 200
+    assert first_order(client)['status'] == 'DRAFT'
+    history = client.get('/api/orders/history').json()['orders']
+    assert any(entry['order_id'] == row['id'] and entry['status'] == 'APPROVED' for entry in history)
 
 
 @pytest.mark.parametrize("quantity", [-1, 1, 25, 24.5])
@@ -218,3 +234,26 @@ def test_A21_budget_tracks_final_order_quantity(client):
     body = client.get("/api/recommendations").json()
     assert body["recommendations"][0]["total_cost_kzt"] == 36000
     assert body["summary"]["total_budget_kzt"] == 36000
+
+
+def test_supplier_minimum_order_value_blocks_underpriced_final_order(client):
+    from app import main
+
+    main.state.datasets['suppliers'].loc[0, 'unit_cost'] = 1000
+    main.state.datasets['suppliers'].loc[0, 'minimum_order_value'] = 50000
+    assert client.post('/api/recommendations/calculate', json={}).status_code == 200
+    row = first_order(client)
+    assert client.post(path(row, 'adjust'), json={'final_quantity': 36}).status_code == 200
+    assert client.post(path(row, 'approve')).status_code == 422
+
+
+def test_invalid_workbook_preserves_existing_data(client):
+    before = client.get('/api/data/status').json()
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame({'sku': ['BAD']}).to_excel(writer, sheet_name='sales', index=False)
+    response = client.post('/api/data/upload-workbook', files={
+        'file': ('bad.xlsx', output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+    })
+    assert response.status_code == 422
+    assert client.get('/api/data/status').json() == before

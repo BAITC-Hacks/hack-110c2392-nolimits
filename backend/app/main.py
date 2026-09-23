@@ -3,24 +3,33 @@ from __future__ import annotations
 import io
 from contextlib import asynccontextmanager
 from datetime import datetime
+from threading import RLock
+from uuid import uuid4
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .schemas import AdjustOrderRequest, CalculateRequest, EditorDraftPayload, EditorRowPayload
+from .schemas import AdjustOrderRequest, CalculateRequest, EditorDraftPayload, EditorRowPayload, MovementRequest
 from .services.demo import build_demo_data
-from .services.replenishment import calculate_recommendations
+from .services.replenishment import calculate_recommendations, prepare_demand
+from .services.forecasting import forecast_series
+from .services.inventory import InventoryError, apply_movement
 from .services.validation import parse_workbook, read_table, validate_table
 from .repositories.database import (
     clear_editor_buffer,
     draft_updated_at,
     init_db,
     load_datasets_draft,
+    load_product_catalog,
     read_editor_buffer,
+    read_inventory_movement,
+    read_inventory_movements,
+    read_order_history,
     save_datasets_draft,
     save_editor_buffer,
+    save_inventory_movement,
     save_recommendations,
     update_order,
 )
@@ -40,8 +49,10 @@ def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
 
 
 def ensure_product_catalog(datasets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    if 'products' not in datasets or datasets['products'].empty:
-        datasets['products'] = build_product_catalog(datasets.get('sales', pd.DataFrame()))
+    current = datasets.get('products', pd.DataFrame())
+    history = load_product_catalog()
+    sales = build_product_catalog(datasets.get('sales', pd.DataFrame()))
+    datasets['products'] = pd.concat([current, history, sales], ignore_index=True).drop_duplicates(subset=['sku'], keep='first').reset_index(drop=True)
     return datasets
 
 
@@ -56,6 +67,7 @@ class AppState:
         self.datasets = ensure_product_catalog(build_demo_data())
         self.recommendations = []
         self.outliers = []
+        self.last_calculation = {}
         return {key: len(value) for key, value in self.datasets.items()}
 
     def load_ekt(self) -> dict[str, int]:
@@ -71,6 +83,7 @@ class AppState:
                     self.datasets = ensure_product_catalog(parse_workbook(f.read()))
                     self.recommendations = []
                     self.outliers = []
+                    self.last_calculation = {}
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
@@ -88,11 +101,13 @@ class AppState:
                     self.datasets = ensure_product_catalog(parse_workbook(f.read()))
                     self.recommendations = []
                     self.outliers = []
+                    self.last_calculation = {}
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
 
 state = AppState()
+inventory_lock = RLock()
 
 
 @asynccontextmanager
@@ -142,10 +157,11 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
         frame = read_table(raw, file.filename or 'upload.csv')
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not read {file.filename}: {exc}') from exc
-    known = set(state.datasets['stock'].get('warehouse', pd.Series(dtype=str)).dropna().astype(str))
     known_skus = set(state.datasets['sales'].get('sku', pd.Series(dtype=str)).dropna().astype(str))
-    cleaned, errors, warnings = validate_table(dataset, frame, known, known_skus)
-    if len(cleaned):
+    # Tables may be uploaded in any order; the current demo's warehouses are
+    # not authoritative for a new import session.
+    cleaned, errors, warnings = validate_table(dataset, frame, known_skus=known_skus)
+    if len(cleaned) or (frame.empty and not errors):
         state.datasets[dataset] = cleaned
         state.datasets = ensure_product_catalog(state.datasets)
         state.recommendations, state.outliers = calculate_recommendations(state.datasets)
@@ -194,7 +210,10 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
         datasets, errors, warnings = parse_workbook(raw, include_report=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
+    if errors or datasets['sales'].empty:
+        raise HTTPException(status_code=422, detail={'errors': errors or ['Workbook has no usable sales history']})
     state.datasets = ensure_product_catalog(datasets)
+    state.last_calculation = {}
     recs, outliers = calculate_recommendations(state.datasets)
     state.recommendations = recs
     state.outliers = outliers
@@ -202,6 +221,93 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
     save_datasets_draft(state.datasets)
     counts = {key: len(value) for key, value in state.datasets.items()}
     return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
+
+
+@app.get('/api/inventory/catalog')
+def inventory_catalog(search: str = '', limit: int | None = None) -> dict:
+    frame = state.datasets['products']
+    if search:
+        needle = search.casefold()
+        frame = frame[frame.astype(str).apply(lambda col: col.str.casefold().str.contains(needle, regex=False, na=False)).any(axis=1)]
+    total = len(frame)
+    if limit is not None:
+        frame = frame.head(min(max(limit, 1), 1000))
+    return {'products': _json_safe(frame.to_dict(orient='records')), 'total': total}
+
+
+@app.get('/api/inventory/stock')
+def inventory_stock(search: str = '') -> dict:
+    products = state.datasets['products']
+    stock = state.datasets['stock']
+    transit = state.datasets['transit']
+    rows: list[dict] = []
+    for item in products.to_dict(orient='records'):
+        sku = str(item['sku'])
+        balances = stock[stock['sku'].astype(str) == sku] if not stock.empty else pd.DataFrame()
+        inbound = transit[transit['sku'].astype(str) == sku] if not transit.empty else pd.DataFrame()
+        warehouses = sorted(set(balances.get('warehouse', pd.Series(dtype=str)).astype(str)) |
+                            set(inbound.get('warehouse', pd.Series(dtype=str)).astype(str))) or ['']
+        for warehouse in warehouses:
+            current = balances[balances['warehouse'].astype(str) == warehouse] if not balances.empty else pd.DataFrame()
+            incoming = inbound[inbound['warehouse'].astype(str) == warehouse] if not inbound.empty else pd.DataFrame()
+            rows.append({'sku': sku, 'product_name': item.get('product_name', sku),
+                         'category': item.get('category', ''), 'warehouse': warehouse,
+                         'current_stock': round(pd.to_numeric(current.get('current_stock', pd.Series(dtype=float)), errors='coerce').fillna(0).sum(), 2),
+                         'in_transit': round(pd.to_numeric(incoming.get('quantity_in_transit', pd.Series(dtype=float)), errors='coerce').fillna(0).sum(), 2),
+                         'unit_price': item.get('unit_price', 0)})
+    if search:
+        needle = search.casefold()
+        rows = [row for row in rows if needle in f"{row['sku']} {row['product_name']} {row['warehouse']}".casefold()]
+    return {'rows': _json_safe(rows), 'total': len(rows)}
+
+
+@app.get('/api/inventory/movements')
+def inventory_movements(limit: int = 100) -> dict:
+    rows = read_inventory_movements(min(max(limit, 1), 500))
+    return {'movements': rows, 'total': len(rows)}
+
+
+@app.post('/api/inventory/movements')
+def create_inventory_movement(request: MovementRequest) -> dict:
+    operation = request.model_dump(mode='json')
+    movement_id = operation.pop('client_request_id') or str(uuid4())
+    with inventory_lock:
+        existing = read_inventory_movement(movement_id)
+        if existing:
+            return {'movement': existing, 'recommendations': len(state.recommendations), 'replayed': True}
+        operation['id'] = movement_id
+        try:
+            candidate = apply_movement(state.datasets, operation)
+            recommendations, outliers = calculate_recommendations(candidate)
+        except (InventoryError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        save_inventory_movement(candidate, operation)
+        state.datasets = candidate
+        state.recommendations, state.outliers = recommendations, outliers
+        state.last_calculation = {}
+        save_recommendations(recommendations)
+        return {'movement': operation, 'recommendations': len(recommendations), 'replayed': False}
+
+
+@app.get('/api/inventory/export')
+def export_inventory() -> StreamingResponse:
+    buffer = io.BytesIO()
+    def spreadsheet_safe(value):
+        return "'" + value if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')) else value
+    with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+        for name in EDITOR_DATASETS:
+            frame = state.datasets[name].copy()
+            frame = frame.map(spreadsheet_safe)
+            frame.to_excel(writer, index=False, sheet_name=name)
+        movements = read_inventory_movements(None)
+        pd.DataFrame([{'id': item['id'], 'type': item['kind'], 'date': item['date'],
+                       'warehouse': item['warehouse'], 'destination': item.get('destination_warehouse'),
+                       'partner': item.get('partner'), 'reference': item.get('reference'),
+                       'sku': line['sku'], 'quantity': line['quantity'], 'unit_price': line['unit_price']}
+                      for item in movements for line in item['lines']]).map(spreadsheet_safe).to_excel(writer, index=False, sheet_name='movements')
+    buffer.seek(0)
+    return StreamingResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                             headers={'Content-Disposition': 'attachment; filename=stockpilot-current.xlsx'})
 
 
 def _require_editor_dataset(dataset: str) -> None:
@@ -382,26 +488,14 @@ def analytics(sku: str, warehouse: str | None = None) -> dict:
         raise HTTPException(status_code=404, detail='SKU not found')
     wh = str(row['warehouse'].iloc[0])
     rec = next((item for item in state.recommendations if item['sku'] == sku and item['warehouse'] == wh), None)
-    row = row.copy()
-    row['date'] = pd.to_datetime(row['date'])
-    daily = row.groupby('date', as_index=False).agg(actual_sales=('quantity', 'sum'), product_name=('product_name', 'first'))
-    # Approximate adjusted history for the chart from the same deterministic robust rule used by the engine.
-    daily['adjusted_demand'] = daily['actual_sales'].astype(float)
-    if rec:
-        outlier_dates = {item['date'] for item in state.outliers if item['sku'] == sku and item['warehouse'] == wh}
-        for index, date in enumerate(daily['date'].dt.strftime('%Y-%m-%d')):
-            if date in outlier_dates:
-                daily.loc[index, 'adjusted_demand'] = daily['adjusted_demand'].median()
-    stockout_dates: set[str] = set()
-    stockout_rows = state.datasets['stockouts']
-    if not stockout_rows.empty:
-        for item in stockout_rows[(stockout_rows['sku'].astype(str) == sku) & (stockout_rows['warehouse'] == wh)].itertuples():
-            stockout_dates.update(pd.date_range(item.start_date, item.end_date, freq='D').strftime('%Y-%m-%d'))
-    points = [{'date': item.date.strftime('%Y-%m-%d'), 'actual_sales': round(float(item.actual_sales), 2), 'adjusted_demand': round(float(item.adjusted_demand), 2), 'is_outlier': item.date.strftime('%Y-%m-%d') in outlier_dates if rec else False, 'is_stockout': item.date.strftime('%Y-%m-%d') in stockout_dates} for item in daily.itertuples()]
+    options = state.last_calculation
+    prepared, _ = prepare_demand(state.datasets, wh, outlier_threshold=options.get('outlier_threshold', 3.5))
+    daily = prepared[prepared['sku'].astype(str) == sku].sort_values('date')
+    points = [{'date': item.date.strftime('%Y-%m-%d'), 'actual_sales': round(float(item.actual_sales), 2), 'adjusted_demand': round(float(item.adjusted_demand), 2), 'is_outlier': bool(item.is_outlier), 'is_stockout': bool(item.is_stockout)} for item in daily.itertuples()]
     if rec:
         forecast_start = pd.to_datetime(daily['date'].max()) + pd.Timedelta(days=1)
-        for day in range(rec['lead_time_days'] + 7):
-            value = rec['average_daily_demand'] * (1 + rec['trend_percent'] / 100 * (day + 1) / max(rec['lead_time_days'] + 7, 1))
+        forecast, _ = forecast_series(daily, rec['lead_time_days'] + options.get('safety_days', 7), options.get('safety_days', 7))
+        for day, value in enumerate(forecast):
             points.append({'date': (forecast_start + pd.Timedelta(days=day)).strftime('%Y-%m-%d'), 'actual_sales': None, 'adjusted_demand': None, 'forecast': round(max(value, 0), 2)})
     return {'sku': sku, 'warehouse': wh, 'product_name': str(row['product_name'].iloc[0]), 'points': points, 'recommendation': rec, 'outliers': [item for item in state.outliers if item['sku'] == sku and (not warehouse or item['warehouse'] == warehouse)]}
 
@@ -417,9 +511,15 @@ def adjust_order(order_id: str, request: AdjustOrderRequest) -> dict:
     if not row:
         raise HTTPException(status_code=404, detail='Recommendation not found')
     row['final_quantity'] = request.final_quantity
+    row['total_cost_kzt'] = round(request.final_quantity * row['unit_cost'], 2)
     row['status'] = 'ADJUSTED'
     update_order(order_id, status='ADJUSTED', final_quantity=request.final_quantity)
     return row
+
+
+@app.get('/api/orders/history')
+def order_history() -> dict:
+    return {'orders': read_order_history()}
 
 
 @app.post('/api/orders/{order_id}/approve')
@@ -427,6 +527,17 @@ def approve_order(order_id: str) -> dict:
     row = next((item for item in state.recommendations if item['id'] == order_id), None)
     if not row:
         raise HTTPException(status_code=404, detail='Recommendation not found')
+    supplier_rows = state.datasets['suppliers']
+    supplier_rows = supplier_rows[supplier_rows['sku'].astype(str) == str(row['sku'])] if not supplier_rows.empty else pd.DataFrame()
+    supplier = supplier_rows.iloc[0] if not supplier_rows.empty else {}
+    moq = float(supplier.get('moq', 0) or 0)
+    package = float(supplier.get('package_size', 1) or 1)
+    minimum_order_value = float(supplier.get('minimum_order_value', 0) or 0)
+    quantity = float(row['final_quantity'])
+    if quantity < 0 or (quantity > 0 and (quantity < moq or abs(quantity / package - round(quantity / package)) > 1e-8)):
+        raise HTTPException(status_code=422, detail=f'Final quantity must respect supplier MOQ {moq:g} and package multiple {package:g}')
+    if quantity > 0 and quantity * row['unit_cost'] + 1e-8 < minimum_order_value:
+        raise HTTPException(status_code=422, detail=f'Final order value must be at least {minimum_order_value:g} KZT')
     row['status'] = 'APPROVED'
     update_order(order_id, status='APPROVED')
     return row
@@ -454,7 +565,11 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
         'Explanation': 'explanation',
         'Status': 'status'
     }
-    frame = pd.DataFrame([{label: row.get(key) for label, key in columns.items()} for row in state.recommendations])
+    def spreadsheet_safe(value):
+        if isinstance(value, str) and value.lstrip().startswith(('=', '+', '-', '@')):
+            return "'" + value
+        return value
+    frame = pd.DataFrame([{label: spreadsheet_safe(row.get(key)) for label, key in columns.items()} for row in state.recommendations])
     if normalized_format == 'xlsx':
         buffer = io.BytesIO()
         frame.to_excel(buffer, index=False)
@@ -465,10 +580,13 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
 
 
 def _summary(rows: list[dict]) -> dict:
+    sales_dates = pd.to_datetime(state.datasets['sales'].get('date', pd.Series(dtype='datetime64[ns]')), errors='coerce')
+    data_as_of = sales_dates.max().strftime('%Y-%m-%d') if not sales_dates.empty and pd.notna(sales_dates.max()) else None
     return {
-        'skus_requiring_replenishment': sum(item['recommended_quantity'] > 0 for item in rows),
+        'data_as_of': data_as_of,
+        'skus_requiring_replenishment': sum(item['final_quantity'] > 0 for item in rows),
         'critical_risks': sum(item['urgency'] == 'CRITICAL' for item in rows),
-        'total_recommended_units': round(sum(item['recommended_quantity'] for item in rows), 1),
+        'total_recommended_units': round(sum(item['final_quantity'] for item in rows), 1),
         'total_budget_kzt': round(sum(item.get('total_cost_kzt', 0) for item in rows), 2),
         'suppliers_involved': len({item['supplier_id'] for item in rows}),
         'detected_anomalies': sum(item['outliers_removed'] for item in rows),

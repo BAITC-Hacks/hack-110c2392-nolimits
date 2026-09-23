@@ -14,6 +14,7 @@ export interface Recommendation {
 }
 
 export interface Summary {
+  data_as_of?: string | null
   skus_requiring_replenishment: number
   critical_risks: number
   total_recommended_units: number
