@@ -36,6 +36,8 @@ state = AppState()
 async def lifespan(_: FastAPI):
     init_db()
     state.load_demo()
+    state.recommendations, state.outliers = calculate_recommendations(state.datasets)
+    save_recommendations(state.recommendations)
     yield
 
 
@@ -84,7 +86,7 @@ def calculate(request: CalculateRequest = CalculateRequest()) -> dict:
     state.outliers = outliers
     state.last_calculation = request.model_dump()
     save_recommendations(recommendations)
-    return {'count': len(recommendations), 'outliers': len(outliers), 'recommendations': recommendations}
+    return {'count': len(recommendations), 'outliers': len(outliers), 'recommendations': _json_safe(recommendations)}
 
 
 @app.get('/api/recommendations')
@@ -101,7 +103,7 @@ def recommendations(warehouse: str | None = None, supplier: str | None = None, c
     if search:
         needle = search.lower()
         rows = [row for row in rows if needle in row['sku'].lower() or needle in row['product_name'].lower()]
-    return {'recommendations': rows, 'summary': _summary(rows)}
+    return {'recommendations': _json_safe(rows), 'summary': _json_safe(_summary(rows))}
 
 
 @app.get('/api/recommendations/{order_id}')
@@ -189,3 +191,14 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
 
 def _summary(rows: list[dict]) -> dict:
     return {'skus_requiring_replenishment': sum(item['recommended_quantity'] > 0 for item in rows), 'critical_risks': sum(item['urgency'] == 'CRITICAL' for item in rows), 'total_recommended_units': round(sum(item['recommended_quantity'] for item in rows), 1), 'suppliers_involved': len({item['supplier_id'] for item in rows}), 'detected_anomalies': sum(item['outliers_removed'] for item in rows), 'estimated_lost_demand': round(sum(item['estimated_lost_demand'] for item in rows), 1)}
+
+
+def _json_safe(value):
+    """Convert numpy scalar values nested in calculation output to JSON primitives."""
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if hasattr(value, 'item') and value.__class__.__module__.startswith('numpy'):
+        return value.item()
+    return value

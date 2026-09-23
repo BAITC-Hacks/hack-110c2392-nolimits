@@ -9,11 +9,13 @@ def mad_outliers(values: pd.Series, threshold: float = 3.5) -> pd.Series:
     median = float(numeric.median())
     mad = float(np.median(np.abs(numeric - median)))
     if mad < 1e-9:
-        return (numeric > np.maximum(median * 4, median + 10))
+        return numeric > max(median * 4, median + 15)
     robust_z = 0.6745 * (numeric - median) / mad
     # A robust score is the primary signal; the size gate prevents ordinary
     # Poisson variation in low-volume SKUs from filling the audit trail.
-    size_gate = (numeric > median * 2.5) | (numeric > median + max(5, 3 * mad))
+    # A candidate must be both statistically extreme and materially larger
+    # than the normal transaction scale (roughly 3.5x median or +4 MAD).
+    size_gate = numeric > max(median * 3.5, median + max(10, 4 * mad))
     return (robust_z.abs() > threshold) & size_gate
 
 

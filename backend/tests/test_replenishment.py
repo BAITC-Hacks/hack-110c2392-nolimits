@@ -1,5 +1,7 @@
 import pandas as pd
+import numpy as np
 
+from app.main import _json_safe
 from app.services.replenishment import calculate_recommendations
 
 
@@ -34,6 +36,13 @@ def test_outlier_is_excluded_but_preserved():
     assert outliers[0]['quantity'] == 1000
 
 
+def test_normal_volume_variation_is_not_marked_as_one_off():
+    data = make_data()
+    data['sales'].loc[30, 'quantity'] = 18
+    _, outliers = calculate_recommendations(data)
+    assert outliers == []
+
+
 def test_recommendation_never_negative():
     row = calculate_recommendations(make_data(stock=10000))[0][0]
     assert row['recommended_quantity'] >= 0
@@ -56,3 +65,8 @@ def test_stockout_zeroes_are_replaced_with_lost_demand():
     row = rows[0]
     assert row['estimated_lost_demand'] > 0
     assert 'Estimated lost demand' in row['explanation']
+
+
+def test_calculation_payload_is_json_safe():
+    payload = _json_safe({'units': np.int64(4), 'nested': [np.float64(2.5)]})
+    assert payload == {'units': 4, 'nested': [2.5]}
