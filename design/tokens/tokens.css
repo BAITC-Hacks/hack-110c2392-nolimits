@@ -1,0 +1,21 @@
+/* Semantic mirror of tokens.json. Change both in the same commit. */
+:root {
+  --canvas:#F3F5EF; --surface:#FFFFFF; --surface-subtle:#F7F9F3;
+  --text-primary:#19342A; --text-secondary:#42583B; --text-muted:#5D7057;
+  --border:#DDE5D9; --border-control:#7D9073;
+  --accent:#376B31; --accent-hover:#244A21; --accent-soft:#EDF6E5;
+  --danger:#B42318; --danger-soft:#FEF3F2;
+  --warning:#854A0E; --warning-soft:#FFF8E6;
+  --success:#166534; --success-soft:#ECFDF3; --teal:#0F766E;
+  --space-1:4px; --space-2:8px; --space-3:12px; --space-4:16px; --space-5:20px;
+  --space-6:24px; --space-8:32px; --space-10:40px; --space-12:48px;
+  --radius-control:8px; --radius-card:12px; --radius-badge:6px;
+  --sidebar:224px; --rail:72px; --header:64px; --control:40px; --touch:44px;
+  --row:64px; --compact-row:48px; --drawer:600px; --content-max:1760px;
+  --font-family:Inter,'Segoe UI',Arial,sans-serif; --font-body:14px; --font-secondary:12px;
+  --font-page-title:28px; --font-section-title:18px; --font-metric:28px;
+  --motion-fast:120ms; --motion-normal:180ms;
+}
+@media(prefers-reduced-motion:reduce) { :root { --motion-fast:0ms; --motion-normal:0ms; } }
+
+:root { --navigation:#10281F; --navigation-text:#F3F8EE; --navigation-active:#2A4430; --lime:#B8E986; --on-lime:#142C20; }
