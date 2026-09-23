@@ -624,8 +624,8 @@ h1{font-size:26px}
 .report{white-space:pre-wrap}
 .cell-muted{display:block;color:var(--muted);font-size:12px;margin-top:4px}
 /* Inventory operations from the teammate branch use the same visual system. */
-.operations-sections{display:flex;gap:0;overflow-x:auto;border-bottom:1px solid var(--border);margin-bottom:20px;scrollbar-width:thin}
-.operations-section{flex:0 0 auto;white-space:nowrap;background:transparent;border:0;border-bottom:3px solid transparent;padding:11px 20px 10px;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer}
+.operations-sections{display:flex;flex-wrap:wrap;gap:0;border-bottom:1px solid var(--border);margin-bottom:20px}
+.operations-section{flex:1 1 140px;white-space:normal;background:transparent;border:0;border-bottom:3px solid transparent;padding:11px 20px 10px;color:var(--muted);font-size:14px;font-weight:600;cursor:pointer}
 .operations-section:hover{color:var(--ink);background:#F5F8F6}
 .operations-section:focus-visible{outline:2px solid var(--primary);outline-offset:-3px}
 .operations-section.active{border-bottom-color:var(--primary);color:var(--primary);background:transparent}
@@ -643,9 +643,9 @@ h1{font-size:26px}
 .operations-document .operations-fields{grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;padding:16px 20px}
 .operations-product .line-fields{grid-template-columns:repeat(2,minmax(0,1fr))}
 .operations-product .add-line{grid-column:1/-1;justify-self:stretch}
-.operations-lines{container-type:normal}
-.operations-lines .table-wrap{overflow-x:auto}
-.operations-lines .operations-table{min-width:560px}
+.operations-lines{container-type:inline-size}
+.operations-lines .operations-table{width:100%;min-width:0}
+.operations-workspace{border:0;padding:0;margin:0;min-width:0}
 .operations-hint{padding:0 24px 24px;font-size:12px}
 .operations-submit{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:16px 24px;border-top:1px solid var(--border)}
 .operations-submit span{color:var(--muted);font-size:12px}

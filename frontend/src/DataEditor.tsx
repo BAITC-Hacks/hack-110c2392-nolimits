@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import RawDataEditor from './RawDataEditor'
 import { getInventoryCatalog, getInventoryMovements, getInventoryStock, inventoryExportUrl, postInventoryMovement, type CatalogProduct, type Movement, type MovementInput, type MovementKind, type MovementLine, type StockRow } from './api'
 import type { Recommendation } from './types'
+import { localDate, readMovementDraft, storeMovementDraft } from './editorState'
 
 type Section = 'purchase' | 'sale' | 'movements' | 'warehouse' | 'reference'
 const sections: Array<{ key: Section; label: string; help: string }> = [
@@ -18,7 +19,6 @@ const movementKinds: Array<{ key: MovementKind | 'HISTORY'; label: string }> = [
   { key: 'HISTORY', label: 'Журнал' },
 ]
 const kindLabel: Record<MovementKind, string> = { PURCHASE: 'Закуп', RECEIPT: 'Поступление', SALE: 'Продажа', TRANSFER: 'Перемещение', ADJUSTMENT: 'Корректировка', RETURN: 'Возврат' }
-const localDate = () => { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}` }
 const newLine = (): MovementLine => ({ sku: '', product_name: '', category: '', quantity: 1, unit_price: 0 })
 const fmt = (value: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
 const fmtMoney = (value: number) => new Intl.NumberFormat('ru-RU', { minimumFractionDigits: Number.isInteger(value) ? 0 : 2, maximumFractionDigits: 2 }).format(value)
@@ -30,23 +30,25 @@ const parseUnitPrice = (value: string): number | null => {
 }
 
 export default function DataEditor({ onToast, onRefresh, recommendations, initialReference = false }: { onToast: (message: string) => void; onRefresh: () => void; recommendations: Recommendation[]; initialReference?: boolean }) {
-  const [section, setSection] = useState<Section>(initialReference ? 'reference' : 'purchase')
-  const [movementTab, setMovementTab] = useState<MovementKind | 'HISTORY'>('RECEIPT')
+  const [draft] = useState(() => readMovementDraft<{ section: Section; movementTab: MovementKind | 'HISTORY'; date: string; warehouse: string; destination: string; partner: string; reference: string; arrival: string; entry: MovementLine; priceInput: string; lines: MovementLine[]; requestId: string }>())
+  const [section, setSection] = useState<Section>(initialReference ? 'reference' : draft.section || 'purchase')
+  const [movementTab, setMovementTab] = useState<MovementKind | 'HISTORY'>(draft.movementTab || 'RECEIPT')
   const [catalog, setCatalog] = useState<CatalogProduct[]>([])
   const [stock, setStock] = useState<StockRow[]>([])
   const [history, setHistory] = useState<Movement[]>([])
   const [search, setSearch] = useState('')
   const [busy, setBusy] = useState(false)
-  const [date, setDate] = useState(localDate())
-  const [warehouse, setWarehouse] = useState('')
-  const [destination, setDestination] = useState('')
-  const [partner, setPartner] = useState('')
-  const [reference, setReference] = useState('')
-  const [arrival, setArrival] = useState(localDate())
-  const [entry, setEntry] = useState<MovementLine>(newLine())
-  const [priceInput, setPriceInput] = useState('')
-  const [lines, setLines] = useState<MovementLine[]>([])
-  const [requestId, setRequestId] = useState(() => crypto.randomUUID())
+  const [date, setDate] = useState(draft.date || localDate())
+  const [warehouse, setWarehouse] = useState(draft.warehouse || '')
+  const [destination, setDestination] = useState(draft.destination || '')
+  const [partner, setPartner] = useState(draft.partner || '')
+  const [reference, setReference] = useState(draft.reference || '')
+  const [arrival, setArrival] = useState(draft.arrival || localDate())
+  const [entry, setEntry] = useState<MovementLine>(draft.entry || newLine())
+  const [priceInput, setPriceInput] = useState(draft.priceInput || '')
+  const [lines, setLines] = useState<MovementLine[]>(draft.lines || [])
+  const [requestId, setRequestId] = useState(() => draft.requestId || crypto.randomUUID())
+  useEffect(() => { storeMovementDraft({ section, movementTab, date, warehouse, destination, partner, reference, arrival, entry, priceInput, lines, requestId }) }, [section, movementTab, date, warehouse, destination, partner, reference, arrival, entry, priceInput, lines, requestId])
 
   const kind: MovementKind = section === 'purchase' ? 'PURCHASE' : section === 'sale' ? 'SALE' : movementTab === 'HISTORY' ? 'RECEIPT' : movementTab
   const warehouses = useMemo(() => [...new Set(stock.map(row => row.warehouse).filter(Boolean))].sort(), [stock])
@@ -101,13 +103,13 @@ export default function DataEditor({ onToast, onRefresh, recommendations, initia
 
   return <section className="operations-page">
     <div className="page-intro operations-intro"><div><p className="eyebrow">{translateText("ТОВАРНЫЙ УЧЁТ")}</p><h2>{translateText("Управление товарами")}</h2><p>{translateText("Оформляйте несколько товаров как один документ. Остатки, товары в пути, история продаж и рекомендации обновятся автоматически.")}</p></div><a className="button primary" href={inventoryExportUrl()}>{translateText("↓ Скачать обновлённый Excel")}</a></div>
-    <nav className="operations-sections" aria-label={translateText('Разделы товарного учёта')}>{sections.map(item => <button key={item.key} type="button" title={translateText(item.help)} aria-current={section === item.key ? 'page' : undefined} className={section === item.key ? 'operations-section active' : 'operations-section'} onClick={() => { if (item.key !== section) { if (lines.length && !window.confirm('Несохранённые позиции документа будут очищены. Продолжить?')) return; setLines([]); setEntry(newLine()); setPriceInput(''); setPartner(''); setDestination(''); setRequestId(crypto.randomUUID()) }; setSection(item.key) }}>{translateText(item.label)}</button>)}</nav>
+    <fieldset disabled={busy} className="operations-workspace"><nav className="operations-sections" aria-label={translateText('Разделы товарного учёта')}>{sections.map(item => <button key={item.key} type="button" title={translateText(item.help)} aria-current={section === item.key ? 'page' : undefined} className={section === item.key ? 'operations-section active' : 'operations-section'} onClick={() => { if (item.key !== section) { if (lines.length && !window.confirm('Несохранённые позиции документа будут очищены. Продолжить?')) return; setLines([]); setEntry(newLine()); setPriceInput(''); setPartner(''); setDestination(''); setRequestId(crypto.randomUUID()) }; setSection(item.key) }}>{translateText(item.label)}</button>)}</nav>
 
     {section === 'warehouse' && <div className="content-card"><div className="card-header"><div><p className="eyebrow">{translateText("СКЛАД / КАТАЛОГ")}</p><h3>{translateText("Все товары в истории проекта")}<span>{catalog.length}</span></h3></div><div className="search editor-search"><span>⌕</span><input value={search} onChange={event => setSearch(event.target.value)} aria-label={translateText("Поиск по складу")} placeholder={translateText("Артикул, название, склад")} /></div></div><div className="table-wrap"><table className="operations-table"><thead><tr><th>{translateText("Артикул")}</th><th>{translateText("Товар")}</th><th>{translateText("Категория")}</th><th>{translateText("Склад")}</th><th>{translateText("В наличии")}</th><th>{translateText("В пути")}</th></tr></thead><tbody>{visibleStock.map((row, index) => <tr key={`${row.sku}-${row.warehouse}-${index}`}><td data-label={translateText("Артикул")}><strong className="sku">{row.sku}</strong></td><td data-label={translateText("Товар")}>{row.product_name}</td><td data-label={translateText("Категория")}>{row.category}</td><td data-label={translateText("Склад")}>{row.warehouse || 'Пока не размещён'}</td><td data-label={translateText("В наличии")}><strong>{fmt(row.current_stock)}</strong></td><td data-label={translateText("В пути")}>{fmt(row.in_transit)}</td></tr>)}</tbody></table>{!visibleStock.length && <div className="empty">{translateText("Товары не найдены.")}</div>}</div></div>}
 
     {section === 'reference' && <RawDataEditor onToast={onToast} onRefresh={() => { reload(); onRefresh() }} />}
 
-    {section === 'movements' && <div className="movement-subtabs">{movementKinds.map(item => <button key={item.key} aria-pressed={movementTab === item.key} className={movementTab === item.key ? 'active' : ''} onClick={() => { if (item.key !== movementTab && lines.length && !window.confirm('Несохранённые позиции документа будут очищены. Продолжить?')) return; setMovementTab(item.key); setLines([]); setEntry(newLine()); setPriceInput(''); setRequestId(crypto.randomUUID()) }}>{translateText(item.label)}</button>)}</div>}
+    {section === 'movements' && <div className="movement-subtabs">{movementKinds.map(item => <button key={item.key} aria-pressed={movementTab === item.key} className={movementTab === item.key ? 'active' : ''} onClick={() => { if (item.key === movementTab || busy) return; if (lines.length && !window.confirm('Несохранённые позиции документа будут очищены. Продолжить?')) return; setMovementTab(item.key); setLines([]); setEntry(newLine()); setPriceInput(''); setRequestId(crypto.randomUUID()) }}>{translateText(item.label)}</button>)}</div>}
     {section === 'movements' && movementTab === 'HISTORY' && <div className="content-card"><div className="card-header"><div><p className="eyebrow">{translateText("ЖУРНАЛ")}</p><h3>{translateText("Движения товаров")}<span>{history.length}</span></h3></div><a className="button subtle" href={inventoryExportUrl()}>↓ Excel</a></div><div className="table-wrap"><table className="operations-table"><thead><tr><th>{translateText("Дата")}</th><th>{translateText("Тип")}</th><th>{translateText("Склад")}</th><th>{translateText("Контрагент / документ")}</th><th>{translateText("Позиции")}</th></tr></thead><tbody>{history.map(item => <tr key={item.id}><td data-label={translateText("Дата")}>{item.date}</td><td data-label={translateText("Тип")}><strong>{kindLabel[item.kind]}</strong></td><td data-label={translateText("Склад")}>{item.warehouse}{item.destination_warehouse ? ` → ${item.destination_warehouse}` : ''}</td><td data-label={translateText("Контрагент / документ")}>{item.partner || item.reference || '—'}</td><td data-label={translateText("Позиции")}>{item.lines.map(line => `${line.sku} × ${fmt(line.quantity)}`).join(', ')}</td></tr>)}</tbody></table>{!history.length && <div className="empty">{translateText("Операций пока нет.")}</div>}</div></div>}
 
     {(section === 'purchase' || section === 'sale' || (section === 'movements' && movementTab !== 'HISTORY')) && <div className="operations-layout">
@@ -135,5 +137,5 @@ export default function DataEditor({ onToast, onRefresh, recommendations, initia
         <div className="content-card operations-card"><div className="card-header"><div><p className="eyebrow">{translateText("ПОСЛЕДНИЕ ДЕЙСТВИЯ")}</p><h3>{translateText("Журнал")}</h3></div></div><div className="operations-recent">{history.slice(0, 6).map(item => <div key={item.id}><strong>{kindLabel[item.kind]}</strong><span>{item.date} · {item.lines.length} поз.</span></div>)}{!history.length && <p>{translateText("Пока нет операций.")}</p>}</div></div>
       </aside>
     </div>}
-  </section>
+  </fieldset></section>
 }

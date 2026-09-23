@@ -55,9 +55,9 @@ const translations: Record<Locale, Record<string, string>> = {
 }
 
 const supplementalTranslations: Record<Locale, Record<string, string>> = {
-  ru: { chartRange: 'Период графика', dayRange: 'День', weekRange: 'Неделя', threeMonths: '3 мес.', nineMonths: '9 мес.', sidebarHide: 'Скрыть боковую панель', sidebarShow: 'Показать боковую панель', brandSubtitle: 'управление запасами' },
-  en: { chartRange: 'Chart range', dayRange: 'Day', weekRange: 'Week', threeMonths: '3 months', nineMonths: '9 months', sidebarHide: 'Hide sidebar', sidebarShow: 'Show sidebar', brandSubtitle: 'inventory control' },
-  kk: { chartRange: 'График кезеңі', dayRange: 'Күн', weekRange: 'Апта', threeMonths: '3 ай', nineMonths: '9 ай', sidebarHide: 'Бүйірлік панельді жасыру', sidebarShow: 'Бүйірлік панельді көрсету', brandSubtitle: 'қорларды басқару' },
+  ru: { discardChanges: 'Отменить несохранённые изменения?', chartRange: 'Период графика', dayRange: 'День', weekRange: 'Неделя', threeMonths: '3 мес.', nineMonths: '9 мес.', sidebarHide: 'Скрыть боковую панель', sidebarShow: 'Показать боковую панель', brandSubtitle: 'управление запасами' },
+  en: { discardChanges: 'Discard unsaved changes?', chartRange: 'Chart range', dayRange: 'Day', weekRange: 'Week', threeMonths: '3 months', nineMonths: '9 months', sidebarHide: 'Hide sidebar', sidebarShow: 'Show sidebar', brandSubtitle: 'inventory control' },
+  kk: { discardChanges: 'Сақталмаған өзгерістер жойылсын ба?', chartRange: 'График кезеңі', dayRange: 'Күн', weekRange: 'Апта', threeMonths: '3 ай', nineMonths: '9 ай', sidebarHide: 'Бүйірлік панельді жасыру', sidebarShow: 'Бүйірлік панельді көрсету', brandSubtitle: 'қорларды басқару' },
 }
 
 function readLocale(): Locale {
