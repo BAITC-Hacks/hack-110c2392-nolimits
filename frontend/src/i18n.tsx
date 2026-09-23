@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { dashboardTranslations } from './dashboardTranslations'
 
 export type Locale = 'ru' | 'en' | 'kk'
 export type DateFormat = 'locale' | 'iso'
@@ -157,10 +158,13 @@ const dashboardCopy: Record<string, [string, string]> = {
   'Управление закупками': ['Procurement management', 'Сатып алуды басқару'], 'Карточка позиции': ['Item details', 'Тауар туралы'], 'График спроса': ['Demand chart', 'Сұраныс графигі'], 'Причина изменения': ['Adjustment reason', 'Өзгерту себебі'],
   'Центральный склад': ['Central warehouse', 'Орталық қойма'], 'Северный склад': ['North warehouse', 'Солтүстік қойма'], 'Южный склад': ['South warehouse', 'Оңтүстік қойма'],
 }
-export function translateText(text: string): string {
-  if (activeLocale === 'ru') return text
-  const custom = dashboardCopy[text]
-  if (custom) return custom[activeLocale === 'en' ? 0 : 1]
-  const key = Object.keys(translations.ru).find(key => translations.ru[key] === text)
-  return key ? translations[activeLocale][key] || text : text
+export function translateText(text: string, values?: Record<string, string | number>): string {
+  let result = text
+  if (activeLocale !== 'ru') {
+    const custom = dashboardTranslations[text] || dashboardCopy[text]
+    const key = Object.keys(translations.ru).find(key => translations.ru[key] === text)
+    result = custom ? custom[activeLocale === 'en' ? 0 : 1] : key ? translations[activeLocale][key] || text : text
+  }
+  for (const [name, value] of Object.entries(values || {})) result = result.split(`{${name}}`).join(String(value))
+  return result
 }

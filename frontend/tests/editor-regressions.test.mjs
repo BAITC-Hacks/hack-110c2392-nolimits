@@ -16,7 +16,7 @@ function harness() {
     useMemo: fn => fn(),
     useEffect: (fn, deps) => { const i = cursor++; if (!effects[i] || deps.some((dep, j) => dep !== effects[i].deps[j])) pending.push(() => { effects[i]?.cleanup?.(); effects[i] = { deps, cleanup: fn() } }) },
     window: { confirm: () => { confirms++; return true }, setTimeout, clearTimeout },
-    crypto: globalThis.crypto, translateText: value => value, useI18n: () => ({ t: value => value }), RawDataEditor: () => null,
+    crypto: globalThis.crypto, translateText: value => value, useI18n: () => ({ t: value => value, formatNumber: value => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value), formatDate: value => value }), RawDataEditor: () => null,
   }
   return { hooks, render: fn => { cursor = 0; const tree = fn(); const next = pending; pending = []; next.forEach(fn => fn()); return tree }, confirms: () => confirms }
 }
@@ -71,4 +71,36 @@ test('late Products response cannot replace the selected Stock table', async () 
   requests.find(r => r.dataset === 'products').resolve({ rows: [{ row_id: 12, sku: 'STALE-PRODUCT' }], total: 1 }); await flush(); tree = render()
   assert.ok(text(tree).includes('CORRECT-STOCK'))
   assert.ok(!text(tree).includes('STALE-PRODUCT'))
+})
+
+test('chart periods use different history windows and retain the forecast', async () => {
+  const input = source('chart.ts').replace(/^import[^\r\n]*$/gm, '').replace(/^export /gm, '')
+  const { code } = await transformWithOxc(input + '\nreturn prepareChartPoints;', 'chart.ts')
+  const prepare = Function(code)()
+  const points = Array.from({ length: 181 }, (_, i) => ({ date: new Date(Date.UTC(2026, 0, i + 1)).toISOString().slice(0, 10), actual_sales: i, adjusted_demand: i }))
+  const future = { date: '2026-07-01', actual_sales: null, adjusted_demand: null, forecast: 42 }
+  points.push(future)
+  assert.equal(prepare(points, 'day').length, 2)
+  assert.equal(prepare(points, 'week').length, 8)
+  assert.notDeepEqual(prepare(points, 'week'), prepare(points, '3m'))
+  assert.deepEqual(prepare(points, '9m').at(-1), future)
+})
+
+test('dashboard navigation, actions and static copy have English and Kazakh translations', async () => {
+  const dictionaryCode = await transformWithOxc(source('dashboardTranslations.ts').replace(/^export /gm, '') + '\nreturn dashboardTranslations;', 'dictionary.ts')
+  const dictionary = Function(dictionaryCode.code)()
+  const input = source('i18n.tsx').replace(/^import[^\r\n]*$/gm, '').replace(/^export /gm, '')
+  const { code } = await transformWithOxc(input + '\nreturn translateText;', 'i18n.tsx', { jsx: { runtime: 'classic' } })
+  const texts = new Set()
+  for (const file of ['App', 'DataEditor', 'DataPages', 'Procurement', 'ItemDetail', 'OrderHistory', 'ui']) {
+    for (const match of source(file + '.tsx').matchAll(/translateText\(["']([^"']+)["']\)/g)) texts.add(match[1])
+  }
+  for (const locale of ['en', 'kk']) {
+    const translate = Function('createContext', 'window', 'dashboardTranslations', code)(() => null, { localStorage: { getItem: key => key === 'stockpilot.locale' ? locale : '{}' } }, dictionary)
+    for (const text of texts) if (/[А-Яа-яЁё]/.test(text)) {
+      assert.ok(translate(text).length, `${locale} translation empty: ${text}`)
+      if (locale === 'en') assert.doesNotMatch(translate(text), /[А-Яа-яЁё]/, text)
+    }
+    assert.ok(!translate('Операция сохранена: {count} позиций. Excel обновлён.', { count: 3 }).includes('{count}'))
+  }
 })

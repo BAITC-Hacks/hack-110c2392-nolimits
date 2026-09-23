@@ -6,9 +6,9 @@ export function prepareChartPoints(points: Point[], range: ChartRange): Point[] 
   const forecast = points.filter(point => point.forecast !== undefined)
   if (!history.length) return forecast
   const latestDate = Date.parse(history[history.length - 1].date)
-  const rangeDays = range === 'day' ? 30 : range === '9m' ? 270 : 90
-  const bucketSize = range === 'day' ? 1 : range === '9m' ? 14 : 7
-  const cutoff = latestDate - rangeDays * 24 * 60 * 60 * 1000
+  const rangeDays = range === 'day' ? 1 : range === 'week' ? 7 : range === '9m' ? 270 : 90
+  const bucketSize = range === 'day' || range === 'week' ? 1 : range === '9m' ? 14 : 7
+  const cutoff = latestDate - (rangeDays - 1) * 24 * 60 * 60 * 1000
   const recent = history.filter(point => Date.parse(point.date) >= cutoff)
   if (bucketSize === 1) return [...recent, ...forecast]
   const compacted: Point[] = []

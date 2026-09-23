@@ -3,8 +3,8 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import type { Status, Urgency } from './types'
 
 export const number = (value: number) => formatNumber(value)
-export const money = (value?: number | null) => value == null ? 'Нет цены' : `${number(value)} ₸`
-export const warehouseName = (value: string) => ({ 'WH-CENTRAL': 'Центральный склад', 'WH-NORTH': 'Северный склад', 'WH-SOUTH': 'Южный склад' }[value] || value)
+export const money = (value?: number | null) => value == null ? translateText('Нет цены') : `${number(value)} ₸`
+export const warehouseName = (value: string) => translateText({ 'WH-CENTRAL': 'Центральный склад', 'WH-NORTH': 'Северный склад', 'WH-SOUTH': 'Южный склад' }[value] || value)
 export const riskLabels: Record<Urgency, string> = { CRITICAL: 'Критический', HIGH: 'Высокий', MEDIUM: 'Средний', LOW: 'Плановый' }
 export const statusLabels: Record<Status, string> = { DRAFT: 'Черновик', ADJUSTED: 'Изменено', APPROVED: 'Утверждено' }
 export function Badge({ value }: { value: Urgency | Status }) { return <span className={`badge ${value.toLowerCase()}`}>{translateText(value in riskLabels ? riskLabels[value as Urgency] : statusLabels[value as Status])}</span> }
