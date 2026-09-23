@@ -1,0 +1,74 @@
+/* Keep responsive fixes separate from the original desktop theme. */
+.brand-mark { flex-shrink: 0; }
+.nav-label { font: inherit; }
+.import-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.topbar { gap: 20px; flex-wrap: wrap; }
+.top-actions { flex-wrap: wrap; }
+.date-chip { white-space: nowrap; }
+.filters { flex-wrap: wrap; }
+.table-wrap { max-width: 100%; }
+.drawer-head > div, .supplier-row > span { min-width: 0; }
+.drawer-head h2, .drawer-head p, .supplier-row small { overflow-wrap: anywhere; }
+.close { flex-shrink: 0; }
+
+@media (max-width: 720px) {
+  .app-shell { display: block; }
+  .sidebar { width: 100%; padding: 12px; flex-direction: row; align-items: center; gap: 12px; }
+  .brand { margin: 0; flex-shrink: 0; }
+  .brand > div:last-child, .side-label, .sidebar-bottom { display: none; }
+  .sidebar nav { display: flex; flex: 1; gap: 4px; min-width: 0; }
+  .nav-item { flex: 1; min-width: 0; min-height: 48px; margin: 0; gap: 4px; padding: 7px 3px; flex-direction: column; }
+  .nav-item .nav-label { font: 500 11px 'DM Sans', sans-serif; width: auto; }
+  .main { width: 100%; padding: 20px 16px 36px; }
+  .topbar { gap: 16px; padding-bottom: 20px; align-items: stretch; }
+  .topbar h1 { font-size: 26px; overflow-wrap: anywhere; }
+  .eyebrow { line-height: 1.6; }
+  .top-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .date-chip { grid-column: 1 / -1; }
+  .button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; text-align: center; }
+  .top-actions .button { min-width: 0; padding: 10px; line-height: 1.4; }
+  .hero-row { padding: 24px 0; }
+  .hero-visual { display: none; }
+  .hero-row h2 { font-size: 30px; }
+  .kpi-grid { gap: 8px; }
+  .kpi-card strong { font-size: 20px; overflow-wrap: anywhere; }
+  .kpi-top small { white-space: normal; overflow: visible; font-size: 11px; }
+  .kpi-top span { flex-shrink: 0; }
+  .card-header { padding: 18px 16px; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .header-actions { flex-wrap: wrap; }
+  .filters { padding: 12px; }
+  .search { min-width: 0; }
+  .search input, .filters select { font-size: 16px; min-height: 44px; }
+  .filters select { min-width: 0; width: 100%; flex: 1 1 100%; }
+  .icon-button, .row-arrow, .close { min-width: 44px; min-height: 44px; }
+  .table-wrap { overscroll-behavior-x: contain; }
+  .anomaly-page { margin-top: 24px; }
+  .subcopy { line-height: 1.6; }
+  /* Preserve explicit table semantics while showing complete records on phones. */
+  .anomaly-table { display: block; min-width: 0; }
+  .anomaly-table thead { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .anomaly-table tbody { display: block; }
+  .anomaly-table tbody tr { display: block; border-top: 1px solid var(--line); padding: 12px 16px; cursor: default; }
+  .anomaly-table td { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); column-gap: 12px; border: 0; padding: 8px 0; overflow-wrap: anywhere; }
+  .anomaly-table td::before { content: attr(data-label); grid-column: 1; grid-row: 1 / span 2; color: #637187; font-size: 11px; }
+  .anomaly-table td > * { grid-column: 2; min-width: 0; }
+  .reason-pill { white-space: normal; line-height: 1.5; }
+  .page-intro { padding: 24px 0; }
+  .import-actions { width: 100%; flex-direction: column; }
+  .dropzone { padding: 20px 14px; text-align: center; overflow-wrap: anywhere; }
+  .dropzone > * { max-width: 100%; }
+  .dropzone span, .dropzone small { line-height: 1.5; }
+  .supplier-row { gap: 12px; }
+  .supplier-row em { flex-shrink: 0; max-width: 45%; text-align: right; }
+  .drawer { height: 100dvh; }
+  .drawer-head { padding: 20px 16px; gap: 12px; }
+  .drawer-head h2 { font-size: 26px; }
+  .drawer-body { padding: 20px 16px; }
+  .chart-title { flex-wrap: wrap; gap: 6px; }
+  .mini-grid > div { min-width: 0; overflow-wrap: anywhere; }
+  .calc-line, .calc-total { gap: 12px; }
+  .calc-line strong, .calc-total strong { text-align: right; }
+  .adjust > div { flex-wrap: wrap; }
+  .adjust input { font-size: 16px; min-height: 44px; }
+  .toast { left: 16px; right: 16px; bottom: 16px; overflow-wrap: anywhere; }
+}
