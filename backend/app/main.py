@@ -74,7 +74,11 @@ def data_status() -> dict:
 @app.post('/api/data/demo')
 def load_demo() -> dict:
     counts = state.load_demo()
-    return {'message': 'Deterministic demo dataset loaded', 'datasets': counts}
+    recs, outliers = calculate_recommendations(state.datasets)
+    state.recommendations = recs
+    state.outliers = outliers
+    save_recommendations(recs)
+    return {'message': 'Deterministic demo dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/upload/{dataset}')
