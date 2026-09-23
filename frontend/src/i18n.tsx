@@ -74,10 +74,13 @@ function readSettings(): UserSettings {
   }
 }
 
+let activeLocale: Locale = readLocale()
+let activeSettings: UserSettings = readSettings()
+
 const localeTag = (locale: Locale) => locale === 'kk' ? 'kk-KZ' : locale === 'en' ? 'en-US' : 'ru-RU'
 
-export function formatNumber(value: number, locale: Locale = readLocale(), mode: NumberFormat = readSettings().numberFormat): string {
-  return new Intl.NumberFormat(mode === 'plain' ? 'en-US' : localeTag(locale), { maximumFractionDigits: 0, useGrouping: mode !== 'plain' }).format(value)
+export function formatNumber(value: number, locale: Locale = activeLocale, mode: NumberFormat = activeSettings.numberFormat): string {
+  return new Intl.NumberFormat(mode === 'plain' ? 'en-US' : localeTag(locale), { maximumFractionDigits: 2, useGrouping: mode !== 'plain' }).format(value)
 }
 
 export function formatDate(value: Date | string, locale: Locale = readLocale(), mode: DateFormat = readSettings().dateFormat): string {
@@ -102,6 +105,8 @@ const I18nContext = createContext<I18nContextValue | null>(null)
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [locale, setLocaleState] = useState<Locale>(readLocale)
   const [settings, setSettings] = useState<UserSettings>(readSettings)
+  activeLocale = locale
+  activeSettings = settings
 
   useEffect(() => {
     window.localStorage.setItem(LOCALE_STORAGE_KEY, locale)
@@ -135,4 +140,26 @@ export function useI18n(): I18nContextValue {
   const context = useContext(I18nContext)
   if (!context) throw new Error('useI18n must be used inside I18nProvider')
   return context
+}
+
+// New dashboard copy uses the same locale as the existing translation provider.
+const dashboardCopy: Record<string, [string, string]> = {
+  'План закупок': ['Purchase plan', 'Сатып алу жоспары'], 'Данные': ['Data', 'Деректер'], 'Исключения': ['Exceptions', 'Ерекшеліктер'], 'История': ['History', 'Тарих'], 'Политики': ['Policies', 'Саясаттар'],
+  'К закупке': ['To purchase', 'Сатып алу'], 'Критические': ['Critical', 'Өте маңызды'], 'Бюджет': ['Budget', 'Бюджет'], 'Рекомендации': ['Recommendations', 'Ұсынымдар'],
+  'Пересчитать': ['Recalculate', 'Қайта есептеу'], 'Экспорт': ['Export', 'Экспорт'], 'По позициям': ['By item', 'Тауар бойынша'], 'По поставщикам': ['By supplier', 'Жеткізуші бойынша'],
+  'Поиск по названию или SKU': ['Search name or SKU', 'Атауы немесе SKU бойынша іздеу'], 'Фильтры': ['Filters', 'Сүзгілер'], 'Сбросить': ['Reset', 'Қалпына келтіру'],
+  'Приоритет': ['Priority', 'Басымдық'], 'Статус': ['Status', 'Мәртебе'], 'Сортировка': ['Sort order', 'Сұрыптау'], 'Все приоритеты': ['All priorities', 'Барлық басымдықтар'], 'Все статусы': ['All statuses', 'Барлық мәртебелер'],
+  'Критический': ['Critical', 'Өте маңызды'], 'Высокий': ['High', 'Жоғары'], 'Средний': ['Medium', 'Орташа'], 'Плановый': ['Planned', 'Жоспарлы'], 'Черновик': ['Draft', 'Жоба'], 'Изменено': ['Adjusted', 'Өзгертілген'], 'Утверждено': ['Approved', 'Бекітілген'],
+  'Назад': ['Previous', 'Артқа'], 'Далее': ['Next', 'Келесі'], 'Закрыть': ['Close', 'Жабу'], 'Сохранить': ['Save', 'Сақтау'], 'Утвердить': ['Approve', 'Бекіту'], 'К заказу': ['Order quantity', 'Тапсырыс саны'], 'Стоимость': ['Cost', 'Құны'],
+  'Позиция / SKU': ['Item / SKU', 'Тауар / SKU'], 'Загрузка файлов': ['File upload', 'Файл жүктеу'], 'Закуп': ['Purchase', 'Сатып алу'], 'Продажа': ['Sale', 'Сату'], 'Движения товаров': ['Stock movements', 'Тауар қозғалысы'], 'Справочники': ['Reference data', 'Анықтамалықтар'],
+  'Поступление': ['Receipt', 'Кіріс'], 'Перемещение': ['Transfer', 'Ауыстыру'], 'Корректировка': ['Adjustment', 'Түзету'], 'Возврат': ['Return', 'Қайтару'], 'Журнал': ['Journal', 'Журнал'], 'Управление товарами': ['Inventory management', 'Тауарларды басқару'],
+  'Управление закупками': ['Procurement management', 'Сатып алуды басқару'], 'Карточка позиции': ['Item details', 'Тауар туралы'], 'График спроса': ['Demand chart', 'Сұраныс графигі'], 'Причина изменения': ['Adjustment reason', 'Өзгерту себебі'],
+  'Центральный склад': ['Central warehouse', 'Орталық қойма'], 'Северный склад': ['North warehouse', 'Солтүстік қойма'], 'Южный склад': ['South warehouse', 'Оңтүстік қойма'],
+}
+export function translateText(text: string): string {
+  if (activeLocale === 'ru') return text
+  const custom = dashboardCopy[text]
+  if (custom) return custom[activeLocale === 'en' ? 0 : 1]
+  const key = Object.keys(translations.ru).find(key => translations.ru[key] === text)
+  return key ? translations[activeLocale][key] || text : text
 }
