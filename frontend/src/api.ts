@@ -9,6 +9,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export async function loadDemo() { return request<{ datasets: Record<string, number> }>('/api/data/demo', { method: 'POST' }) }
 export async function loadEkt() { return request<{ message: string; datasets: Record<string, number>; recommendations: number }>('/api/data/load-ekt', { method: 'POST' }) }
+export async function loadAnomalies() { return request<{ message: string; datasets: Record<string, number>; recommendations: number; outliers: number }>('/api/data/load-anomalies', { method: 'POST' }) }
 export async function calculate() { return request<{ count: number; outliers: number; recommendations: Recommendation[] }>('/api/recommendations/calculate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }) }
 export async function getRecommendations(params = '') { return request<{ recommendations: Recommendation[]; summary: Summary }>(`/api/recommendations${params}`) }
 export async function getAnalytics(sku: string, warehouse: string) { return request<{ sku: string; warehouse: string; product_name: string; points: Point[]; recommendation: Recommendation | null; outliers: unknown[] }>(`/api/analytics/${encodeURIComponent(sku)}?warehouse=${encodeURIComponent(warehouse)}`) }

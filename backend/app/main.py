@@ -45,6 +45,23 @@ class AppState:
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
+    def load_anomalies(self) -> dict[str, int]:
+        from pathlib import Path
+        data_paths = [
+            Path(__file__).parent.parent / "data" / "ekt_extreme_anomalies_sales_and_stock.xlsx",
+            Path("data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
+            Path("c:/Users/олд/Desktop/Alema/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
+            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_extreme_anomalies_sales_and_stock.xlsx"),
+        ]
+        for p in data_paths:
+            if p.exists():
+                with open(p, "rb") as f:
+                    self.datasets = parse_workbook(f.read())
+                    self.recommendations = []
+                    self.outliers = []
+                    return {key: len(value) for key, value in self.datasets.items()}
+        return {}
+
 
 state = AppState()
 
@@ -111,6 +128,18 @@ def load_ekt() -> dict:
     state.outliers = outliers
     save_recommendations(recs)
     return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+
+
+@app.post('/api/data/load-anomalies')
+def load_anomalies() -> dict:
+    counts = state.load_anomalies()
+    if not counts:
+        raise HTTPException(status_code=404, detail='Extreme anomalies dataset file not found')
+    recs, outliers = calculate_recommendations(state.datasets)
+    state.recommendations = recs
+    state.outliers = outliers
+    save_recommendations(recs)
+    return {'message': 'Real-world extreme anomalies dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/data/upload-workbook')
