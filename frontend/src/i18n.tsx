@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { dashboardTranslations } from './dashboardTranslations'
 
 export type Locale = 'ru' | 'en' | 'kk'
 export type DateFormat = 'locale' | 'iso'
@@ -55,9 +56,9 @@ const translations: Record<Locale, Record<string, string>> = {
 }
 
 const supplementalTranslations: Record<Locale, Record<string, string>> = {
-  ru: { chartRange: 'Период графика', dayRange: 'День', weekRange: 'Неделя', threeMonths: '3 мес.', nineMonths: '9 мес.', sidebarHide: 'Скрыть боковую панель', sidebarShow: 'Показать боковую панель', brandSubtitle: 'управление запасами' },
-  en: { chartRange: 'Chart range', dayRange: 'Day', weekRange: 'Week', threeMonths: '3 months', nineMonths: '9 months', sidebarHide: 'Hide sidebar', sidebarShow: 'Show sidebar', brandSubtitle: 'inventory control' },
-  kk: { chartRange: 'График кезеңі', dayRange: 'Күн', weekRange: 'Апта', threeMonths: '3 ай', nineMonths: '9 ай', sidebarHide: 'Бүйірлік панельді жасыру', sidebarShow: 'Бүйірлік панельді көрсету', brandSubtitle: 'қорларды басқару' },
+  ru: { discardChanges: 'Отменить несохранённые изменения?', chartRange: 'Период графика', dayRange: 'День', weekRange: 'Неделя', threeMonths: '3 мес.', nineMonths: '9 мес.', sidebarHide: 'Скрыть боковую панель', sidebarShow: 'Показать боковую панель', brandSubtitle: 'управление запасами' },
+  en: { discardChanges: 'Discard unsaved changes?', chartRange: 'Chart range', dayRange: 'Day', weekRange: 'Week', threeMonths: '3 months', nineMonths: '9 months', sidebarHide: 'Hide sidebar', sidebarShow: 'Show sidebar', brandSubtitle: 'inventory control' },
+  kk: { discardChanges: 'Сақталмаған өзгерістер жойылсын ба?', chartRange: 'График кезеңі', dayRange: 'Күн', weekRange: 'Апта', threeMonths: '3 ай', nineMonths: '9 ай', sidebarHide: 'Бүйірлік панельді жасыру', sidebarShow: 'Бүйірлік панельді көрсету', brandSubtitle: 'қорларды басқару' },
 }
 
 function readLocale(): Locale {
@@ -157,10 +158,13 @@ const dashboardCopy: Record<string, [string, string]> = {
   'Управление закупками': ['Procurement management', 'Сатып алуды басқару'], 'Карточка позиции': ['Item details', 'Тауар туралы'], 'График спроса': ['Demand chart', 'Сұраныс графигі'], 'Причина изменения': ['Adjustment reason', 'Өзгерту себебі'],
   'Центральный склад': ['Central warehouse', 'Орталық қойма'], 'Северный склад': ['North warehouse', 'Солтүстік қойма'], 'Южный склад': ['South warehouse', 'Оңтүстік қойма'],
 }
-export function translateText(text: string): string {
-  if (activeLocale === 'ru') return text
-  const custom = dashboardCopy[text]
-  if (custom) return custom[activeLocale === 'en' ? 0 : 1]
-  const key = Object.keys(translations.ru).find(key => translations.ru[key] === text)
-  return key ? translations[activeLocale][key] || text : text
+export function translateText(text: string, values?: Record<string, string | number>): string {
+  let result = text
+  if (activeLocale !== 'ru') {
+    const custom = dashboardTranslations[text] || dashboardCopy[text]
+    const key = Object.keys(translations.ru).find(key => translations.ru[key] === text)
+    result = custom ? custom[activeLocale === 'en' ? 0 : 1] : key ? translations[activeLocale][key] || text : text
+  }
+  for (const [name, value] of Object.entries(values || {})) result = result.split(`{${name}}`).join(String(value))
+  return result
 }
