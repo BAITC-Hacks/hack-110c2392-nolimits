@@ -68,14 +68,14 @@ p,td,th,dd,dt,small,strong,span,h1,h2,h3,button,a{overflow-wrap:anywhere}
 .brand small{color:#A7B8AB;
   font-weight:400;
   margin-top:4px}
-.brand-mark{display:grid;
-  place-items:center;
-  background:#2F6B4F;
-  border:1px solid #587563;
-  border-radius:6px;
-  width:36px;
-  height:36px;
-  color:white;
+.brand-mark{display:block;
+  object-fit:contain;
+  padding:4px;
+  background:#F2F3EF;
+  border:1px solid #D5E0D8;
+  border-radius:8px;
+  width:40px;
+  height:40px;
   flex-shrink:0}
 .sidebar nav{display:grid;
   gap:8px}
@@ -342,6 +342,7 @@ tr.selected{background:#EAF3EE}
   padding:16px 24px;
   border-bottom:1px solid var(--border);
   gap:16px}
+.modal-header h2{display:flex;align-items:center;gap:10px}
 .item-drawer{position:fixed;
   inset:0 0 0 auto;
   margin:0;
