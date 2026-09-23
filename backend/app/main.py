@@ -227,6 +227,9 @@ def approve_order(order_id: str) -> dict:
 
 @app.get('/api/orders/export')
 def export_orders(format: str = 'csv') -> StreamingResponse:
+    normalized_format = format.lower()
+    if normalized_format not in {'csv', 'xlsx'}:
+        raise HTTPException(status_code=400, detail="Export format must be 'csv' or 'xlsx'")
     columns = {
         'SKU': 'sku',
         'Product': 'product_name',
@@ -245,7 +248,7 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
         'Status': 'status'
     }
     frame = pd.DataFrame([{label: row.get(key) for label, key in columns.items()} for row in state.recommendations])
-    if format.lower() == 'xlsx':
+    if normalized_format == 'xlsx':
         buffer = io.BytesIO()
         frame.to_excel(buffer, index=False)
         buffer.seek(0)

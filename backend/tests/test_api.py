@@ -22,3 +22,28 @@ def test_demo_endpoint_returns_calculated_result():
 
     assert response.status_code == 200
     assert response.json()['recommendations'] > 0
+
+
+def test_ekt_endpoint_loads_bundled_dataset_and_recalculates():
+    with TestClient(app) as client:
+        response = client.post('/api/data/load-ekt')
+    assert response.status_code == 200
+    body = response.json()
+    assert body['datasets']['sales'] > 0
+    assert body['recommendations'] > 0
+
+
+def test_orders_export_returns_csv_with_expected_headers():
+    with TestClient(app) as client:
+        response = client.get('/api/orders/export?format=csv')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('text/csv')
+    assert 'SKU' in response.text
+    assert 'Recommended Quantity' in response.text
+
+
+def test_orders_export_rejects_unknown_format():
+    with TestClient(app) as client:
+        response = client.get('/api/orders/export?format=json')
+    assert response.status_code == 400
+    assert "csv" in response.json()['detail']
