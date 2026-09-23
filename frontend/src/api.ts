@@ -51,3 +51,6 @@ export async function getInventoryStock(search = '') { return request<{ rows: St
 export async function getInventoryMovements() { return request<{ movements: Movement[]; total: number }>('/api/inventory/movements?limit=200') }
 export async function postInventoryMovement(input: MovementInput) { return request<{ movement: Movement; recommendations: number; replayed: boolean }>('/api/inventory/movements', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }) }
 export function inventoryExportUrl() { return `${API}/api/inventory/export` }
+
+export interface ArchivedOrder { id: number; order_id: string; status: Recommendation['status']; final_quantity: number; metadata: Record<string, unknown>; archived_at: string }
+export function getOrderHistory() { return request<{ orders: ArchivedOrder[] }>('/api/orders/history') }

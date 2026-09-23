@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { calculate, exportUrl, getAnalytics, getEditorState, getRecommendations } from './api'
 import DataEditor from './DataEditor'
+import OrderHistory from './OrderHistory'
 import { Anomalies, Imports } from './DataPages'
 import ItemDetail from './ItemDetail'
 import Procurement from './Procurement'
@@ -12,6 +13,7 @@ const initialSummary: Summary = { skus_requiring_replenishment: 0, critical_risk
 export default function App() {
   const [page, setPage] = useState('overview')
   const [dataTab, setDataTab] = useState('editor')
+  const [restoreDraft, setRestoreDraft] = useState(false)
   const [mobileNav, setMobileNav] = useState(false)
   const [exportOpen, setExportOpen] = useState(false)
   const [rows, setRows] = useState<Recommendation[]>([])
@@ -27,7 +29,7 @@ export default function App() {
   const timer = useRef<number | undefined>(undefined)
   const showToast = (message: string) => { clearTimeout(timer.current); setToast(message); timer.current = window.setTimeout(() => setToast(''), 7000) }
   const refresh = async () => { setBusy(true); try { const r = await getRecommendations(); setRows(r.recommendations); setSummary(r.summary); setError('') } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось загрузить рекомендации') } finally { setBusy(false) } }
-  useEffect(() => { void refresh(); getEditorState().then(r => { if (r.draft) setPage('data') }).catch(() => undefined); return () => clearTimeout(timer.current) }, [])
+  useEffect(() => { void refresh(); getEditorState().then(r => { if (r.draft) { setRestoreDraft(true); setPage('data') } }).catch(() => undefined); return () => clearTimeout(timer.current) }, [])
   const run = async (action: () => Promise<unknown>) => { setBusy(true); try { await action(); await refresh(); showToast('Данные обновлены') } catch (e) { setError(e instanceof Error ? e.message : 'Не удалось выполнить действие') } finally { setBusy(false) } }
   const open = async (row: Recommendation) => { const id = ++requestId.current; setSelected(row); setPoints([]); setAnalyticsLoading(true); setAnalyticsError(''); try { const r = await getAnalytics(row.sku, row.warehouse); if (requestId.current === id) setPoints(r.points) } catch (e) { if (requestId.current === id) setAnalyticsError(e instanceof Error ? e.message : 'Аналитика недоступна') } finally { if (requestId.current === id) setAnalyticsLoading(false) } }
   const navigation = <nav aria-label="Основная навигация">{nav.map(item => <button title={item.label} key={item.key} className={`nav-item ${page === item.key ? 'active' : ''}`} aria-current={page === item.key ? 'page' : undefined} onClick={() => { setPage(item.key); setMobileNav(false) }}><Icon name={item.icon}/><span>{item.label}</span></button>)}</nav>
@@ -38,10 +40,11 @@ export default function App() {
       <div className="context-line">Все склады · данные на {summary.data_as_of || 'дату источника'}</div>
       {error && <div className="error-banner" role="alert"><span>{error}</span><button className="button subtle" disabled={busy} onClick={refresh}>Повторить</button></div>}
       {page === 'overview' && <Procurement rows={rows} summary={summary} selectedId={selected?.id} onOpen={open} busy={busy}/>}
-      {page === 'data' && <><div className="page-tabs"><button aria-pressed={dataTab === 'editor'} onClick={() => setDataTab('editor')}>Редактор данных</button><button aria-pressed={dataTab === 'import'} onClick={() => setDataTab('import')}>Загрузка файлов</button></div>{dataTab === 'editor' ? <DataEditor onToast={showToast} onRefresh={refresh} recommendations={rows}/> : <Imports onToast={showToast} onRefresh={refresh}/>}</>}
+      {page === 'data' && <><div className="page-tabs"><button aria-pressed={dataTab === 'editor'} onClick={() => setDataTab('editor')}>Редактор данных</button><button aria-pressed={dataTab === 'import'} onClick={() => setDataTab('import')}>Загрузка файлов</button></div>{dataTab === 'editor' ? <DataEditor onToast={showToast} onRefresh={refresh} recommendations={rows} initialReference={restoreDraft}/> : <Imports onToast={showToast} onRefresh={refresh}/>}</>}
       {page === 'exceptions' && <Anomalies/>}
-      {page === 'history' && <section className="content-card"><div className="card-header"><div><h2>Изменённые и утверждённые позиции</h2><p>Только текущий расчёт. Архив и даты действий пока недоступны в API.</p></div></div><div className="supplier-list">{rows.filter(r => r.status !== 'DRAFT').map(r => <button className="supplier-item" key={r.id} onClick={() => open(r)}><span>{r.product_name}<small>{r.sku} · {warehouseName(r.warehouse)}</small></span><strong>{number(r.final_quantity)} ед.</strong><Badge value={r.status}/></button>)}{!rows.some(r => r.status !== 'DRAFT') && <p className="empty">Изменений в текущем расчёте нет.</p>}</div></section>}
-      {page === 'policies' && <section className="content-card panel-body"><h2>Параметры закупок</h2><p>Сроки поставки, минимальные партии и кратность упаковки задаются в исходных данных поставщиков. Расчёт использует существующие правила backend.</p><button className="button subtle" onClick={() => { setDataTab('editor'); setPage('data') }}>Открыть редактор данных</button><p className="caption">Для изменения параметров выберите вкладку «Поставщики».</p></section>}
+      {page === 'history' && <section className="content-card"><div className="card-header"><div><h2>Изменённые и утверждённые позиции</h2><p>Позиции текущего расчёта. Предыдущие версии доступны в архиве ниже.</p></div></div><div className="supplier-list">{rows.filter(r => r.status !== 'DRAFT').map(r => <button className="supplier-item" key={r.id} onClick={() => open(r)}><span>{r.product_name}<small>{r.sku} · {warehouseName(r.warehouse)}</small></span><strong>{number(r.final_quantity)} ед.</strong><Badge value={r.status}/></button>)}{!rows.some(r => r.status !== 'DRAFT') && <p className="empty">Изменений в текущем расчёте нет.</p>}</div></section>}
+      {page === 'history' && <OrderHistory/>}
+      {page === 'policies' && <section className="content-card panel-body"><h2>Параметры закупок</h2><p>Сроки поставки, минимальные партии и кратность упаковки задаются в исходных данных поставщиков. Расчёт использует существующие правила backend.</p><button className="button subtle" onClick={() => { setDataTab('editor'); setPage('data') }}>Открыть редактор данных</button><p className="caption">Для изменения параметров выберите «Справочники» → «Поставщики».</p></section>}
     </main>
     {mobileNav && <Modal title="StockPilot" className="navigation-drawer" onClose={() => setMobileNav(false)}>{navigation}</Modal>}
     {selected && <ItemDetail key={selected.id} row={selected} points={points} loading={analyticsLoading} analyticsError={analyticsError} onClose={() => { setSelected(null); requestId.current++ }} onChanged={r => { setSelected(r); setRows(old => old.map(item => item.id === r.id ? r : item)); void refresh(); showToast(r.status === 'APPROVED' ? 'Позиция утверждена' : 'Количество сохранено') }}/>}
