@@ -1,14 +1,19 @@
 import type { Point } from './types'
-export function compactChartPoints(points: Point[]): Point[] {
+export type ChartRange = 'day' | 'week' | '3m' | '9m'
+
+export function prepareChartPoints(points: Point[], range: ChartRange): Point[] {
   const history = points.filter(point => point.forecast === undefined)
   const forecast = points.filter(point => point.forecast !== undefined)
-  if (history.length <= 120) return points
+  if (!history.length) return forecast
   const latestDate = Date.parse(history[history.length - 1].date)
-  const cutoff = latestDate - 90 * 24 * 60 * 60 * 1000
+  const rangeDays = range === 'day' ? 30 : range === '9m' ? 270 : 90
+  const bucketSize = range === 'day' ? 1 : range === '9m' ? 14 : 7
+  const cutoff = latestDate - rangeDays * 24 * 60 * 60 * 1000
   const recent = history.filter(point => Date.parse(point.date) >= cutoff)
+  if (bucketSize === 1) return [...recent, ...forecast]
   const compacted: Point[] = []
-  for (let index = 0; index < recent.length; index += 7) {
-    const bucket = recent.slice(index, index + 7)
+  for (let index = 0; index < recent.length; index += bucketSize) {
+    const bucket = recent.slice(index, index + bucketSize)
     const actual = bucket.map(point => point.actual_sales).filter((value): value is number => value !== null)
     const adjusted = bucket.map(point => point.adjusted_demand).filter((value): value is number => value !== null)
     compacted.push({

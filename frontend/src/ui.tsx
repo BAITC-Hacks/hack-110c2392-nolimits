@@ -1,12 +1,13 @@
+import { translateText, formatNumber } from './i18n'
 import { useEffect, useRef, type ReactNode } from 'react'
 import type { Status, Urgency } from './types'
 
-export const number = (value: number) => new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 }).format(value)
+export const number = (value: number) => formatNumber(value)
 export const money = (value?: number | null) => value == null ? 'Нет цены' : `${number(value)} ₸`
 export const warehouseName = (value: string) => ({ 'WH-CENTRAL': 'Центральный склад', 'WH-NORTH': 'Северный склад', 'WH-SOUTH': 'Южный склад' }[value] || value)
 export const riskLabels: Record<Urgency, string> = { CRITICAL: 'Критический', HIGH: 'Высокий', MEDIUM: 'Средний', LOW: 'Плановый' }
 export const statusLabels: Record<Status, string> = { DRAFT: 'Черновик', ADJUSTED: 'Изменено', APPROVED: 'Утверждено' }
-export function Badge({ value }: { value: Urgency | Status }) { return <span className={`badge ${value.toLowerCase()}`}>{value in riskLabels ? riskLabels[value as Urgency] : statusLabels[value as Status]}</span> }
+export function Badge({ value }: { value: Urgency | Status }) { return <span className={`badge ${value.toLowerCase()}`}>{translateText(value in riskLabels ? riskLabels[value as Urgency] : statusLabels[value as Status])}</span> }
 export function Icon({ name }: { name: string }) {
   const paths: Record<string, ReactNode> = {
     plan: <><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/></>,
@@ -32,7 +33,7 @@ export function Modal({ title, children, onClose, className = '' }: { title: str
     document.body.style.overflow = 'hidden'
     return () => { ref.current?.close(); document.body.style.overflow = before; previous?.focus() }
   }, [])
-  return <dialog ref={ref} className={`modal ${className}`} aria-label={title} onCancel={event => { event.preventDefault(); onClose() }}>
-    <div className="modal-header"><h2>{title}</h2><button className="icon-button" aria-label="Закрыть" onClick={onClose}><Icon name="close"/></button></div>{children}
+  return <dialog ref={ref} className={`modal ${className}`} aria-label={translateText(title)} onCancel={event => { event.preventDefault(); onClose() }}>
+    <div className="modal-header"><h2>{translateText(title)}</h2><button className="icon-button" aria-label={translateText("Закрыть")} onClick={onClose}><Icon name="close"/></button></div>{children}
   </dialog>
 }
