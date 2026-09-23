@@ -67,6 +67,14 @@ def test_stockout_zeroes_are_replaced_with_lost_demand():
     assert 'Estimated lost demand' in row['explanation']
 
 
+def test_stockout_days_missing_from_sparse_sales_history_are_restored():
+    data = make_data(stock=20)
+    data['sales'] = data['sales'].drop(data['sales'].index[35:39])
+    data['stockouts'] = pd.DataFrame([{'sku': 'SKU-1', 'warehouse': 'WH1', 'start_date': '2026-02-05', 'end_date': '2026-02-08'}])
+    rows, _ = calculate_recommendations(data)
+    assert rows[0]['estimated_lost_demand'] > 0
+
+
 def test_calculation_payload_is_json_safe():
     payload = _json_safe({'units': np.int64(4), 'nested': [np.float64(2.5)]})
     assert payload == {'units': 4, 'nested': [2.5]}
@@ -100,3 +108,13 @@ def test_budget_kzt_calculation():
     assert row['unit_cost'] == 1500.0
     assert row['total_cost_kzt'] == pytest.approx(row['recommended_quantity'] * 1500.0)
     assert 'KZT' in row['explanation']
+
+
+def test_supplier_minimum_order_value_is_respected():
+    data = make_data(stock=0)
+    data['suppliers'].loc[0, 'unit_cost'] = 100.0
+    data['suppliers'].loc[0, 'minimum_order_value'] = 50000.0
+    row = calculate_recommendations(data)[0][0]
+    assert row['total_cost_kzt'] >= 50000.0
+    assert row['metadata']['minimum_order_value'] == 50000.0
+    assert 'minimum order value' in row['explanation'].lower()

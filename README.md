@@ -58,6 +58,7 @@ $$\text{Net Requirement} = \max(0, \text{Demand during Lead Time} + \text{Safety
 ### 2. Учёт ограничений поставщиков (MOQ и квант упаковки)
 - Если $\text{Net Requirement} > 0$ и задан $\text{MOQ}$: $\text{Order} = \max(\text{Net Requirement}, \text{MOQ})$.
 - Любой положительный заказ (в том числе при `Pack = 1`) округляется вверх: $\text{Order} = \lceil \frac{\max(\text{Net Requirement}, \text{MOQ})}{\text{Package Size}} \rceil \times \text{Package Size}$.
+- Если поставщик задаёт минимальную сумму заказа, перед округлением применяется также нижняя граница `Minimum Order Value / Unit Cost`. Закупщик не может утвердить итог ниже этой суммы.
 
 ### 3. Фильтрация разовых выбросов (Robust MAD)
 Алгоритм использует медианное абсолютное отклонение (Median Absolute Deviation, MAD) вместо чувствительного к выбросам стандартного отклонения:

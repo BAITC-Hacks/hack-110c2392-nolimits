@@ -140,9 +140,13 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         raw_order = max(0.0, forecast_lead + safety - inventory_position)
         moq = max(0.0, _number(supplier.get('moq', 0)))
         package = max(1.0, _number(supplier.get('package_size', 1)))
+        unit_cost = _number(supplier.get('unit_cost', supplier.get('price', 0)))
+        minimum_order_value = max(0.0, _number(supplier.get('minimum_order_value', 0)))
         recommended = raw_order
         if recommended > 0 and moq:
             recommended = max(recommended, moq)
+        if recommended > 0 and minimum_order_value and unit_cost > 0:
+            recommended = max(recommended, minimum_order_value / unit_cost)
         if recommended > 0:
             recommended = np.ceil((recommended - 1e-9) / package) * package
         avg = max(details['average_daily_demand'], 0.01)
@@ -156,7 +160,6 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         else:
             urgency = 'LOW'
         recommended = round(float(recommended), 2)
-        unit_cost = _number(supplier.get('unit_cost', supplier.get('price', 0)))
         if not unit_cost and 'price' in group.columns:
             unit_cost = _number(group['price'].iloc[0])
         total_cost_kzt = round(recommended * unit_cost, 2)
@@ -164,13 +167,13 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         lost = float(group['estimated_lost_demand'].sum())
         relevant_outliers = [item for item in outlier_rows if item['sku'] == sku and item['warehouse'] == wh]
         outlier_count = len(relevant_outliers)
-        explanation = _explanation(recommended, lead, forecast_lead, current, incoming, safety, details, outlier_count, lost, moq, package, unit_cost, total_cost_kzt)
-        metadata = {'dataset_signature': dataset_signature, 'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'outliers_removed': relevant_outliers, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
+        explanation = _explanation(recommended, lead, forecast_lead, current, incoming, safety, details, outlier_count, lost, moq, package, unit_cost, total_cost_kzt, minimum_order_value)
+        metadata = {'dataset_signature': dataset_signature, 'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'minimum_order_value': round(minimum_order_value, 2), 'outliers_removed': relevant_outliers, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
         recommendations.append({'id': f'{sku}:{wh}', 'sku': sku, 'product_name': group['product_name'].iloc[0], 'warehouse': wh, 'category': group['category'].iloc[0], 'supplier_id': str(supplier.get('supplier_id', 'UNASSIGNED')), 'supplier_name': str(supplier.get('supplier_name', 'Unassigned supplier')), 'current_stock': round(current, 2), 'in_transit': round(incoming, 2), 'average_daily_demand': round(avg, 2), 'forecast_lead_time': round(forecast_lead, 2), 'safety_stock': round(safety, 2), 'inventory_position': round(inventory_position, 2), 'raw_recommended_quantity': round(raw_order, 2), 'recommended_quantity': round(recommended, 2), 'final_quantity': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'lead_time_days': lead, 'days_of_cover': round(days_cover, 1), 'urgency': urgency, 'trend_direction': details['trend_direction'], 'trend_percent': details['trend_percent'], 'seasonality_detected': details['seasonality_detected'], 'outliers_removed': outlier_count, 'estimated_lost_demand': round(lost, 2), 'status': 'DRAFT', 'explanation': explanation, 'metadata': metadata})
     return recommendations, outlier_rows
 
 
-def _explanation(recommended: float, lead: int, forecast: float, current: float, incoming: float, safety: float, details: dict, outliers: int, lost: float, moq: float, package: float, unit_cost: float = 0.0, total_cost_kzt: float = 0.0) -> str:
+def _explanation(recommended: float, lead: int, forecast: float, current: float, incoming: float, safety: float, details: dict, outliers: int, lost: float, moq: float, package: float, unit_cost: float = 0.0, total_cost_kzt: float = 0.0, minimum_order_value: float = 0.0) -> str:
     lines = [f'Recommended: {recommended:g} units.', f'Expected demand during the supplier\'s {lead}-day lead time: {forecast:g} units.', f'Current warehouse stock: {current:g} units.', f'Goods already in transit: {incoming:g} units.', f'Safety stock: {safety:g} units.', f'Trend: {details["trend_direction"]} ({details["trend_percent"]:+.1f}%).']
     if details['seasonality_detected']:
         lines.append('A seasonal demand pattern was detected and included in the forecast.')
@@ -182,6 +185,8 @@ def _explanation(recommended: float, lead: int, forecast: float, current: float,
         lines.append(f'Supplier MOQ of {moq:g} units was respected.')
     if package > 1 and recommended:
         lines.append(f'Quantity was rounded up to a package multiple of {package:g}.')
+    if minimum_order_value and total_cost_kzt >= minimum_order_value:
+        lines.append(f'Supplier minimum order value of {minimum_order_value:,.0f} KZT was respected.')
     if total_cost_kzt > 0:
         lines.append(f'Total estimated budget: {total_cost_kzt:,.0f} KZT ({unit_cost:,.0f} KZT/unit).')
     return ' '.join(lines)

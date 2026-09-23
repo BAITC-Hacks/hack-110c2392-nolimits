@@ -230,3 +230,26 @@ def test_A21_budget_tracks_final_order_quantity(client):
     body = client.get("/api/recommendations").json()
     assert body["recommendations"][0]["total_cost_kzt"] == 36000
     assert body["summary"]["total_budget_kzt"] == 36000
+
+
+def test_supplier_minimum_order_value_blocks_underpriced_final_order(client):
+    from app import main
+
+    main.state.datasets['suppliers'].loc[0, 'unit_cost'] = 1000
+    main.state.datasets['suppliers'].loc[0, 'minimum_order_value'] = 50000
+    assert client.post('/api/recommendations/calculate', json={}).status_code == 200
+    row = first_order(client)
+    assert client.post(path(row, 'adjust'), json={'final_quantity': 36}).status_code == 200
+    assert client.post(path(row, 'approve')).status_code == 422
+
+
+def test_invalid_workbook_preserves_existing_data(client):
+    before = client.get('/api/data/status').json()
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame({'sku': ['BAD']}).to_excel(writer, sheet_name='sales', index=False)
+    response = client.post('/api/data/upload-workbook', files={
+        'file': ('bad.xlsx', output.getvalue(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'),
+    })
+    assert response.status_code == 422
+    assert client.get('/api/data/status').json() == before
