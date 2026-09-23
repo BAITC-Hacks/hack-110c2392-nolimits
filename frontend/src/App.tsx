@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Area, CartesianGrid, ComposedChart, ReferenceArea, ResponsiveContainer, Scatter, Tooltip, XAxis, YAxis } from 'recharts'
-import { adjustOrder, approveOrder, calculate, exportUrl, getAnalytics, getOutliers, getRecommendations, loadAnomalies, loadDemo, loadEkt, uploadFile, uploadWorkbook } from './api'
+import { adjustOrder, approveOrder, calculate, exportUrl, getAnalytics, getEditorState, getOutliers, getRecommendations, loadAnomalies, loadDemo, loadEkt, uploadFile, uploadWorkbook } from './api'
+import DataEditor from './DataEditor'
 import type { Point, Recommendation, Summary, Urgency } from './types'
 
-const nav = [{ key: 'overview', label: 'Overview', icon: '◒' }, { key: 'imports', label: 'Data intake', icon: '↥' }, { key: 'anomalies', label: 'Anomalies', icon: '⌁' }]
+const nav = [{ key: 'overview', label: 'Overview', icon: '◒' }, { key: 'editor', label: 'Data editor', icon: '✎' }, { key: 'imports', label: 'Data intake', icon: '↥' }, { key: 'anomalies', label: 'Anomalies', icon: '⌁' }]
 const urgencyOrder: Record<Urgency, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 }
 const money = (value: number) => new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(value)
 
@@ -25,7 +26,7 @@ export default function App() {
 
   const refresh = async () => { setBusy(true); try { const result = await getRecommendations(); setRows(result.recommendations); setSummary(result.summary) } catch (error) { showToast(error instanceof Error ? error.message : 'Could not load recommendations') } finally { setBusy(false) } }
   const showToast = (message: string) => { setToast(message); window.setTimeout(() => setToast(''), 3500) }
-  useEffect(() => { refresh() }, [])
+  useEffect(() => { refresh(); getEditorState().then(result => { if (result.draft) setPage('editor') }).catch(() => undefined) }, [])
 
   const demo = async () => { setBusy(true); try { await loadDemo(); await calculate(); await refresh(); showToast('Demo scenario loaded and recalculated') } catch (error) { showToast(error instanceof Error ? error.message : 'Could not load demo') } finally { setBusy(false) } }
   const ekt = async () => { setBusy(true); try { await loadEkt(); await refresh(); showToast('⚡️ ТОО «Электрокомплект» (ekt.kz) data loaded & calculated!') } catch (error) { showToast(error instanceof Error ? error.message : 'Could not load ekt.kz data') } finally { setBusy(false) } }
@@ -42,6 +43,7 @@ export default function App() {
     </aside>
     <main className="main"><header className="topbar"><div><p className="eyebrow">PURCHASING / WAREHOUSE CONTROL</p><h1>{page === 'overview' ? 'Replenishment Cockpit' : nav.find(item => item.key === page)?.label}</h1></div><div className="top-actions"><span className="date-chip">● Live data · {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}</span><button className="button subtle" onClick={demo} disabled={busy}>↻ Synthetic demo</button><button className="button primary" onClick={ekt} disabled={busy}>⚡️ ekt.kz Dataset (Казахстан)</button><button className="button" style={{ background: '#f59e0b', color: '#000', fontWeight: 600 }} onClick={anomalies} disabled={busy}>💥 Аномалии (Stress Test)</button></div></header>
       {page === 'overview' && <Overview rows={visibleRows} allRows={rows} summary={summary} search={search} setSearch={setSearch} urgency={urgency} setUrgency={setUrgency} warehouse={warehouse} setWarehouse={setWarehouse} supplier={supplier} setSupplier={setSupplier} category={category} setCategory={setCategory} warehouses={warehouses} sort={sort} setSort={setSort} onOpen={openSku} onRefresh={refresh} onToast={showToast} />}
+      {page === 'editor' && <DataEditor onToast={showToast} onRefresh={refresh} />}
       {page === 'imports' && <Imports onToast={showToast} onRefresh={refresh} onEkt={ekt} onAnomalies={anomalies} />}
       {page === 'anomalies' && <Anomalies onOpen={openSku} />}
     </main>

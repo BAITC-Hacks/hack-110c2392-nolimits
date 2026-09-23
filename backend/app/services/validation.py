@@ -7,6 +7,7 @@ import pandas as pd
 
 
 REQUIRED_COLUMNS: dict[str, set[str]] = {
+    "products": {"sku", "product_name", "category"},
     "sales": {"date", "sku", "product_name", "quantity", "price", "customer_id", "warehouse", "category"},
     "stock": {"sku", "warehouse", "current_stock"},
     "transit": {"sku", "warehouse", "quantity_in_transit", "expected_arrival_date"},
@@ -15,6 +16,13 @@ REQUIRED_COLUMNS: dict[str, set[str]] = {
 }
 
 COLUMN_ALIASES: dict[str, dict[str, list[str]]] = {
+    "products": {
+        "sku": ["sku", "артикул", "код", "код_товара", "код товара", "item_code"],
+        "product_name": ["product_name", "наименование_товара", "наименование", "наименование товара", "номенклатура", "товар", "name"],
+        "category": ["category", "категория", "товарная_группа", "товарная группа", "группа"],
+        "unit_price": ["unit_price", "цена", "цена_за_ед_kzt", "цена_kzt", "price"],
+        "active": ["active", "активен", "активный"],
+    },
     "sales": {
         "date": ["date", "дата", "дата_продажи", "дата продажи", "период", "sale_date"],
         "sku": ["sku", "артикул", "код", "код_товара", "код товара", "item_code"],
@@ -123,7 +131,7 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
             invalid_rows |= parsed.isna()
         frame[col] = parsed
         
-    numeric_cols = {"quantity", "price", "current_stock", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
+    numeric_cols = {"quantity", "price", "unit_price", "current_stock", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
     for col in numeric_cols.intersection(frame.columns):
         values = pd.to_numeric(frame[col], errors="coerce")
         bad = int(values.isna().sum())
@@ -142,7 +150,7 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         if missing_warehouse:
             errors.append(f"{dataset}.warehouse: {missing_warehouse} missing warehouse value(s)")
             invalid_rows |= frame["warehouse"].isna() | (frame["warehouse"].astype(str).str.strip() == "")
-    for col in ["current_stock", "quantity_in_transit", "quantity", "lead_time_days", "moq", "package_size"]:
+    for col in ["current_stock", "quantity_in_transit", "quantity", "unit_price", "lead_time_days", "moq", "package_size"]:
         if col in frame:
             values = pd.to_numeric(frame[col], errors="coerce")
             negative_mask = values < 0

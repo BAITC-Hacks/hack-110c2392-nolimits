@@ -2,28 +2,58 @@ from __future__ import annotations
 
 import io
 from contextlib import asynccontextmanager
+from datetime import datetime
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from .schemas import AdjustOrderRequest, CalculateRequest
+from .schemas import AdjustOrderRequest, CalculateRequest, EditorDraftPayload, EditorRowPayload
 from .services.demo import build_demo_data
 from .services.replenishment import calculate_recommendations
 from .services.validation import parse_workbook, read_table, validate_table
-from .repositories.database import init_db, save_recommendations, update_order
+from .repositories.database import (
+    clear_editor_buffer,
+    draft_updated_at,
+    init_db,
+    load_datasets_draft,
+    read_editor_buffer,
+    save_datasets_draft,
+    save_editor_buffer,
+    save_recommendations,
+    update_order,
+)
+
+
+EDITOR_DATASETS = ('products', 'sales', 'stock', 'transit', 'stockouts', 'suppliers')
+
+
+def build_product_catalog(sales: pd.DataFrame) -> pd.DataFrame:
+    columns = ['sku', 'product_name', 'category', 'unit_price', 'active']
+    if sales.empty:
+        return pd.DataFrame(columns=columns)
+    catalog = sales[['sku', 'product_name', 'category', 'price']].copy()
+    catalog = catalog.rename(columns={'price': 'unit_price'}).drop_duplicates(subset=['sku'])
+    catalog['active'] = True
+    return catalog[columns].reset_index(drop=True)
+
+
+def ensure_product_catalog(datasets: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+    if 'products' not in datasets or datasets['products'].empty:
+        datasets['products'] = build_product_catalog(datasets.get('sales', pd.DataFrame()))
+    return datasets
 
 
 class AppState:
     def __init__(self) -> None:
-        self.datasets: dict[str, pd.DataFrame] = {name: pd.DataFrame() for name in ['sales', 'stock', 'transit', 'stockouts', 'suppliers']}
+        self.datasets: dict[str, pd.DataFrame] = {name: pd.DataFrame() for name in EDITOR_DATASETS}
         self.recommendations: list[dict] = []
         self.outliers: list[dict] = []
         self.last_calculation: dict = {}
 
     def load_demo(self) -> dict[str, int]:
-        self.datasets = build_demo_data()
+        self.datasets = ensure_product_catalog(build_demo_data())
         self.recommendations = []
         self.outliers = []
         return {key: len(value) for key, value in self.datasets.items()}
@@ -38,7 +68,7 @@ class AppState:
         for p in data_paths:
             if p.exists():
                 with open(p, "rb") as f:
-                    self.datasets = parse_workbook(f.read())
+                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
                     self.recommendations = []
                     self.outliers = []
                     return {key: len(value) for key, value in self.datasets.items()}
@@ -55,7 +85,7 @@ class AppState:
         for p in data_paths:
             if p.exists():
                 with open(p, "rb") as f:
-                    self.datasets = parse_workbook(f.read())
+                    self.datasets = ensure_product_catalog(parse_workbook(f.read()))
                     self.recommendations = []
                     self.outliers = []
                     return {key: len(value) for key, value in self.datasets.items()}
@@ -68,9 +98,13 @@ state = AppState()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
-    state.load_demo()
+    restored = load_datasets_draft()
+    state.datasets = ensure_product_catalog(restored) if restored and not restored.get('sales', pd.DataFrame()).empty else state.datasets
+    if state.datasets.get('sales', pd.DataFrame()).empty:
+        state.load_demo()
     state.recommendations, state.outliers = calculate_recommendations(state.datasets)
     save_recommendations(state.recommendations)
+    save_datasets_draft(state.datasets)
     yield
 
 
@@ -95,6 +129,7 @@ def load_demo() -> dict:
     state.recommendations = recs
     state.outliers = outliers
     save_recommendations(recs)
+    save_datasets_draft(state.datasets)
     return {'message': 'Deterministic demo dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
@@ -112,8 +147,10 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
     cleaned, errors, warnings = validate_table(dataset, frame, known, known_skus)
     if len(cleaned):
         state.datasets[dataset] = cleaned
+        state.datasets = ensure_product_catalog(state.datasets)
         state.recommendations, state.outliers = calculate_recommendations(state.datasets)
         save_recommendations(state.recommendations)
+        save_datasets_draft(state.datasets)
     return {
         'dataset': dataset,
         'rows_loaded': len(cleaned),
@@ -133,6 +170,7 @@ def load_ekt() -> dict:
     state.recommendations = recs
     state.outliers = outliers
     save_recommendations(recs)
+    save_datasets_draft(state.datasets)
     return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
@@ -145,6 +183,7 @@ def load_anomalies() -> dict:
     state.recommendations = recs
     state.outliers = outliers
     save_recommendations(recs)
+    save_datasets_draft(state.datasets)
     return {'message': 'Real-world extreme anomalies dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
@@ -155,13 +194,145 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
         datasets, errors, warnings = parse_workbook(raw, include_report=True)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
-    state.datasets = datasets
+    state.datasets = ensure_product_catalog(datasets)
     recs, outliers = calculate_recommendations(state.datasets)
     state.recommendations = recs
     state.outliers = outliers
     save_recommendations(recs)
+    save_datasets_draft(state.datasets)
     counts = {key: len(value) for key, value in state.datasets.items()}
     return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers), 'errors': errors, 'warnings': warnings}
+
+
+def _require_editor_dataset(dataset: str) -> None:
+    if dataset not in EDITOR_DATASETS:
+        raise HTTPException(status_code=404, detail=f'Unknown editor dataset: {dataset}')
+
+
+def _editor_frame(dataset: str, rows: list[dict]) -> tuple[pd.DataFrame, list[str]]:
+    frame = pd.DataFrame(rows)
+    if 'row_id' in frame.columns:
+        frame = frame.drop(columns=['row_id'])
+    known_warehouses = set(state.datasets['stock'].get('warehouse', pd.Series(dtype=str)).dropna().astype(str))
+    known_skus = set(state.datasets['sales'].get('sku', pd.Series(dtype=str)).dropna().astype(str))
+    cleaned, errors, warnings = validate_table(dataset, frame, known_warehouses, known_skus)
+    if errors or len(cleaned) != len(frame):
+        raise HTTPException(status_code=400, detail={'message': 'Row validation failed', 'errors': errors, 'warnings': warnings})
+    return cleaned.reset_index(drop=True), warnings
+
+
+def _recalculate_editor_state(dataset: str, frame: pd.DataFrame, warnings: list[str] | None = None) -> dict:
+    state.datasets[dataset] = frame.reset_index(drop=True)
+    state.datasets = ensure_product_catalog(state.datasets)
+    state.recommendations, state.outliers = calculate_recommendations(state.datasets)
+    save_recommendations(state.recommendations)
+    save_datasets_draft(state.datasets)
+    return {
+        'dataset': dataset,
+        'rows': len(state.datasets[dataset]),
+        'recommendations': len(state.recommendations),
+        'outliers': len(state.outliers),
+        'warnings': warnings or [],
+    }
+
+
+@app.get('/api/editor/state')
+def editor_state() -> dict:
+    return {
+        'datasets': {name: len(state.datasets.get(name, pd.DataFrame())) for name in EDITOR_DATASETS},
+        'draft': read_editor_buffer(),
+        'updated_at': draft_updated_at(),
+    }
+
+
+@app.get('/api/editor/draft')
+def get_editor_draft() -> dict:
+    return {'draft': read_editor_buffer(), 'updated_at': draft_updated_at()}
+
+
+@app.post('/api/editor/draft')
+def save_editor_draft(payload: EditorDraftPayload) -> dict:
+    _require_editor_dataset(payload.dataset)
+    save_editor_buffer(payload.dataset, payload.row, payload.row_id)
+    return {'saved': True, 'draft': read_editor_buffer(), 'updated_at': draft_updated_at()}
+
+
+@app.delete('/api/editor/draft')
+def delete_editor_draft() -> dict:
+    clear_editor_buffer()
+    return {'deleted': True}
+
+
+@app.get('/api/editor/{dataset}')
+def editor_rows(dataset: str, offset: int = 0, limit: int = 50, search: str | None = None) -> dict:
+    _require_editor_dataset(dataset)
+    offset = max(offset, 0)
+    limit = min(max(limit, 1), 200)
+    frame = state.datasets.get(dataset, pd.DataFrame())
+    if search:
+        needle = search.lower()
+        mask = frame.astype(str).apply(lambda column: column.str.lower().str.contains(needle, regex=False, na=False)).any(axis=1)
+        frame = frame.loc[mask]
+    total = len(frame)
+    rows = []
+    for index, row in frame.iloc[offset:offset + limit].iterrows():
+        rows.append({'row_id': int(index), **_json_safe(row.to_dict())})
+    return {'dataset': dataset, 'columns': list(state.datasets[dataset].columns), 'rows': rows, 'total': total, 'offset': offset, 'limit': limit, 'draft': read_editor_buffer()}
+
+
+@app.get('/api/editor/{dataset}/export')
+def export_editor_dataset(dataset: str, format: str = 'xlsx') -> StreamingResponse:
+    _require_editor_dataset(dataset)
+    normalized_format = format.lower()
+    if normalized_format not in {'csv', 'xlsx'}:
+        raise HTTPException(status_code=400, detail="Export format must be 'csv' or 'xlsx'")
+    frame = state.datasets[dataset]
+    filename = f'stockpilot-{dataset}'
+    if normalized_format == 'xlsx':
+        buffer = io.BytesIO()
+        frame.to_excel(buffer, index=False)
+        buffer.seek(0)
+        return StreamingResponse(buffer, media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', headers={'Content-Disposition': f'attachment; filename={filename}.xlsx'})
+    content = frame.to_csv(index=False).encode('utf-8-sig')
+    return StreamingResponse(io.BytesIO(content), media_type='text/csv', headers={'Content-Disposition': f'attachment; filename={filename}.csv'})
+
+
+@app.post('/api/editor/{dataset}/rows')
+def create_editor_row(dataset: str, payload: EditorRowPayload) -> dict:
+    _require_editor_dataset(dataset)
+    current = state.datasets.get(dataset, pd.DataFrame()).copy()
+    candidate = pd.concat([current, pd.DataFrame([payload.row])], ignore_index=True)
+    cleaned, warnings = _editor_frame(dataset, candidate.to_dict(orient='records'))
+    result = _recalculate_editor_state(dataset, cleaned, warnings)
+    clear_editor_buffer()
+    return result
+
+
+@app.patch('/api/editor/{dataset}/rows/{row_id}')
+def update_editor_row(dataset: str, row_id: int, payload: EditorRowPayload) -> dict:
+    _require_editor_dataset(dataset)
+    current = state.datasets.get(dataset, pd.DataFrame()).copy()
+    if row_id < 0 or row_id >= len(current):
+        raise HTTPException(status_code=404, detail='Editor row not found')
+    for column, value in payload.row.items():
+        if column in current.columns:
+            current.at[row_id, column] = value
+    cleaned, warnings = _editor_frame(dataset, current.to_dict(orient='records'))
+    result = _recalculate_editor_state(dataset, cleaned, warnings)
+    clear_editor_buffer()
+    return result
+
+
+@app.delete('/api/editor/{dataset}/rows/{row_id}')
+def delete_editor_row(dataset: str, row_id: int) -> dict:
+    _require_editor_dataset(dataset)
+    current = state.datasets.get(dataset, pd.DataFrame()).copy()
+    if row_id < 0 or row_id >= len(current):
+        raise HTTPException(status_code=404, detail='Editor row not found')
+    current = current.drop(index=row_id).reset_index(drop=True)
+    result = _recalculate_editor_state(dataset, current) if current.empty else _recalculate_editor_state(dataset, _editor_frame(dataset, current.to_dict(orient='records'))[0])
+    clear_editor_buffer()
+    return result
 
 
 @app.post('/api/recommendations/calculate')
@@ -311,6 +482,15 @@ def _json_safe(value):
         return {key: _json_safe(item) for key, item in value.items()}
     if isinstance(value, list):
         return [_json_safe(item) for item in value]
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if value is pd.NaT:
+        return None
     if hasattr(value, 'item') and value.__class__.__module__.startswith('numpy'):
         return value.item()
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
     return value

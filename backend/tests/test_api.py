@@ -62,9 +62,36 @@ def test_orders_export_rejects_unknown_format():
     assert "csv" in response.json()['detail']
 
 
+def test_editor_draft_and_product_crud_are_persistent():
+    product = {'sku': 'EDITOR-1', 'product_name': 'Editor product', 'category': 'Tools', 'unit_price': 250, 'active': True}
+    with TestClient(app) as client:
+        draft = client.post('/api/editor/draft', json={'dataset': 'products', 'row': product})
+        draft_read = client.get('/api/editor/draft')
+        created = client.post('/api/editor/products/rows', json={'row': product})
+        rows = client.get('/api/editor/products?search=EDITOR-1').json()
+        row_id = rows['rows'][0]['row_id']
+        updated = client.patch(f'/api/editor/products/rows/{row_id}', json={'row': {**product, 'product_name': 'Edited product'}})
+        deleted = client.delete(f'/api/editor/products/rows/{row_id}')
+        draft_after_save = client.get('/api/editor/draft')
+    assert draft.status_code == 200
+    assert draft_read.json()['draft']['row']['sku'] == 'EDITOR-1'
+    assert created.status_code == 200
+    assert updated.status_code == 200
+    assert deleted.status_code == 200
+    assert draft_after_save.json()['draft'] is None
+
+
+def test_editor_dataset_export_returns_xlsx():
+    with TestClient(app) as client:
+        response = client.get('/api/editor/products/export?format=xlsx')
+    assert response.status_code == 200
+    assert response.headers['content-type'].startswith('application/vnd.openxmlformats-officedocument')
+
+
 def test_single_dataset_upload_recalculates_recommendations():
     sales_csv = b"date,sku,product_name,quantity,price,customer_id,warehouse,category\n2026-01-01,UPLOAD-1,Uploaded item,12,100,C1,WH-NORTH,Tools\n2026-01-02,UPLOAD-1,Uploaded item,14,100,C2,WH-NORTH,Tools\n"
     with TestClient(app) as client:
+        client.post('/api/data/demo')
         response = client.post('/api/data/upload/sales', files={'file': ('sales.csv', sales_csv, 'text/csv')})
     assert response.status_code == 200
     body = response.json()

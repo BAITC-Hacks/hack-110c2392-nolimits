@@ -17,6 +17,16 @@ class AdjustOrderRequest(BaseModel):
     final_quantity: float = Field(ge=0)
 
 
+class EditorRowPayload(BaseModel):
+    row: dict[str, Any]
+
+
+class EditorDraftPayload(BaseModel):
+    dataset: str
+    row: dict[str, Any] = Field(default_factory=dict)
+    row_id: int | None = Field(default=None, ge=0)
+
+
 class UploadResponse(BaseModel):
     dataset: str
     rows_loaded: int
