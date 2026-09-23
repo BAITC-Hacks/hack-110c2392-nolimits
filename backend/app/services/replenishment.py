@@ -111,7 +111,9 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
     source = hashlib.sha256()
     for name in ('sales', 'stock', 'transit', 'stockouts', 'suppliers'):
         source.update(name.encode())
-        source.update(data.get(name, pd.DataFrame()).to_csv(index=False).encode('utf-8'))
+        # Drafts are stored as JSON records, so the signature must survive
+        # their reload (timestamps become ISO strings and empty frames lose columns).
+        source.update(data.get(name, pd.DataFrame()).to_json(orient='records', date_format='iso').encode('utf-8'))
     dataset_signature = source.hexdigest()
     stock = data.get('stock', pd.DataFrame()).copy()
     transit = data.get('transit', pd.DataFrame()).copy()
