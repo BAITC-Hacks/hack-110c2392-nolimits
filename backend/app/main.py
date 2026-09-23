@@ -134,7 +134,12 @@ def analytics(sku: str, warehouse: str | None = None) -> dict:
         for index, date in enumerate(daily['date'].dt.strftime('%Y-%m-%d')):
             if date in outlier_dates:
                 daily.loc[index, 'adjusted_demand'] = daily['adjusted_demand'].median()
-    points = [{'date': item.date.strftime('%Y-%m-%d'), 'actual_sales': round(float(item.actual_sales), 2), 'adjusted_demand': round(float(item.adjusted_demand), 2)} for item in daily.itertuples()]
+    stockout_dates: set[str] = set()
+    stockout_rows = state.datasets['stockouts']
+    if not stockout_rows.empty:
+        for item in stockout_rows[(stockout_rows['sku'].astype(str) == sku) & (stockout_rows['warehouse'] == wh)].itertuples():
+            stockout_dates.update(pd.date_range(item.start_date, item.end_date, freq='D').strftime('%Y-%m-%d'))
+    points = [{'date': item.date.strftime('%Y-%m-%d'), 'actual_sales': round(float(item.actual_sales), 2), 'adjusted_demand': round(float(item.adjusted_demand), 2), 'is_outlier': item.date.strftime('%Y-%m-%d') in outlier_dates if rec else False, 'is_stockout': item.date.strftime('%Y-%m-%d') in stockout_dates} for item in daily.itertuples()]
     if rec:
         forecast_start = pd.to_datetime(daily['date'].max()) + pd.Timedelta(days=1)
         for day in range(rec['lead_time_days'] + 7):

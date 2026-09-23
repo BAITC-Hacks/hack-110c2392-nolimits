@@ -13,4 +13,4 @@ export interface Recommendation {
 }
 
 export interface Summary { skus_requiring_replenishment: number; critical_risks: number; total_recommended_units: number; suppliers_involved: number; detected_anomalies: number; estimated_lost_demand: number }
-export interface Point { date: string; actual_sales: number | null; adjusted_demand: number | null; forecast?: number }
+export interface Point { date: string; actual_sales: number | null; adjusted_demand: number | null; forecast?: number; is_outlier?: boolean; is_stockout?: boolean }

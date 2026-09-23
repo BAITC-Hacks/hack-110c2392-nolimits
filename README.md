@@ -37,6 +37,7 @@ Open `http://localhost:5173`. The backend starts with a deterministic demo datas
 - Deterministic explanations, audit metadata, urgency, days of cover and supplier grouping data.
 - SQLite/SQLAlchemy audit repository stores calculation metadata plus draft/adjusted/approved order state.
 - Dashboard with KPI cards, filters, sorting, demand chart, calculation trace, outlier audit page, drag-and-drop imports, CSV/XLSX export and explicit draft/adjust/approve workflow.
+- Dashboard filters cover warehouse, supplier, category, urgency and search; supplier order packets summarize the review queue, while SKU charts mark forecast, stockout windows and anomalies.
 - Orders are never sent to suppliers automatically. Approval is an internal state change only.
 
 ## Tests
@@ -46,7 +47,7 @@ cd backend
 py -m pytest
 ```
 
-Tests cover the monotonic impact of current stock and inbound goods, robust outlier handling and non-negative recommendations.
+Tests cover the monotonic impact of current stock and inbound goods, robust outlier handling, non-negative recommendations, package rounding and stockout lost-demand correction.
 
 ## API overview
 

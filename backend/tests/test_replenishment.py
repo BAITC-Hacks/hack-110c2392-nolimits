@@ -37,3 +37,22 @@ def test_outlier_is_excluded_but_preserved():
 def test_recommendation_never_negative():
     row = calculate_recommendations(make_data(stock=10000))[0][0]
     assert row['recommended_quantity'] >= 0
+
+
+def test_moq_and_package_rounding_are_applied():
+    data = make_data(stock=0)
+    data['suppliers'].loc[0, 'moq'] = 25
+    data['suppliers'].loc[0, 'package_size'] = 10
+    row = calculate_recommendations(data)[0][0]
+    assert row['recommended_quantity'] >= 25
+    assert row['recommended_quantity'] % 10 == 0
+    assert 'rounded up to a package multiple' in row['explanation']
+
+
+def test_stockout_zeroes_are_replaced_with_lost_demand():
+    data = make_data(stock=20)
+    data['stockouts'] = pd.DataFrame([{'sku': 'SKU-1', 'warehouse': 'WH1', 'start_date': '2026-02-05', 'end_date': '2026-02-08'}])
+    rows, _ = calculate_recommendations(data)
+    row = rows[0]
+    assert row['estimated_lost_demand'] > 0
+    assert 'Estimated lost demand' in row['explanation']
