@@ -23,7 +23,9 @@ def trend(values: pd.Series) -> tuple[str, float]:
     clean = pd.to_numeric(values, errors="coerce").fillna(0).astype(float)
     if len(clean) < 28 or clean.mean() <= 0:
         return "stable", 0.0
-    weeks = clean.groupby(np.arange(len(clean)) // 7).sum()
+    # Normalize the last, possibly incomplete week. A single day with 10 units
+    # is not a seven-day fall from 70 to 10 units.
+    weeks = clean.groupby(np.arange(len(clean)) // 7).mean() * 7
     if len(weeks) < 4:
         return "stable", 0.0
     x = np.arange(len(weeks), dtype=float)
@@ -61,30 +63,51 @@ def forecast_series(history: pd.DataFrame, horizon: int, safety_days: int = 7) -
             seasonal_dow_factor = {int(k): float(v / overall) for k, v in by_day.items()}
             
     # 2. Monthly / Annual seasonality (e.g. winter lighting spike, summer construction peak)
-    if len(history) >= 120 and overall > 0:
+    if len(history) >= 365 and overall > 0:
         work["month"] = work["date"].dt.month
-        by_month = work.groupby("month")["adjusted_demand"].mean()
-        if len(by_month) >= 4 and (by_month.max() - by_month.min()) / overall >= 0.20:
+        # Four consecutively rising months are not evidence of an annual
+        # calendar pattern. Require a year and remove the long-term linear
+        # level before comparing months; otherwise growth becomes seasonality.
+        x = np.arange(len(work), dtype=float)
+        centered_time = (x - x.mean()) / 365.0
+        # Estimate time and month effects jointly. A plain linear detrend would
+        # mistake one winter-high / summer-low year for a long decline.
+        month_indicators = [(work['month'].to_numpy() == month).astype(float) for month in range(1, 12)]
+        design = np.column_stack([np.ones(len(work)), centered_time, *month_indicators])
+        coefficients, *_ = np.linalg.lstsq(design, work['adjusted_demand'].to_numpy(dtype=float), rcond=None)
+        level = np.maximum(coefficients[0] + coefficients[1] * centered_time, overall * 0.1)
+        work['calendar_residual'] = work['adjusted_demand'] / level
+        by_month = work.groupby('month')['calendar_residual'].mean()
+        if len(by_month) == 12 and (by_month.max() - by_month.min()) >= 0.20:
             seasonal_detected = True
-            seasonal_month_factor = {int(k): float(v / overall) for k, v in by_month.items()}
+            seasonal_month_factor = {int(k): float(v) for k, v in by_month.items()}
 
-    if seasonal_month_factor:
-        # Estimate trend after removing the calendar wave; otherwise an October
-        # baseline incorrectly treats last winter's peak as a long decline.
-        deseasonalized = work["adjusted_demand"] / work["date"].dt.month.map(seasonal_month_factor).fillna(1)
-        direction, trend_percent = trend(deseasonalized)
-    trend_factor = 1 + np.clip(trend_percent, -25, 35) / 100 * np.arange(1, horizon + 1) / max(horizon, 1)
-            
     future_dates = pd.date_range(pd.to_datetime(history["date"].max()) + pd.Timedelta(days=1), periods=horizon, freq="D")
-    forecast = base * trend_factor
-    
+    historical_factors = np.ones(len(work))
+    future_factors = np.ones(horizon)
     if seasonal_dow_factor:
-        recent_factor = np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in work["date"].tail(len(recent))])
-        forecast = forecast * np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in future_dates]) / max(float(np.average(recent_factor, weights=weights)), 0.01)
-        
+        historical_factors *= np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in work['date']])
+        future_factors *= np.array([seasonal_dow_factor.get(int(d.dayofweek), 1.0) for d in future_dates])
     if seasonal_month_factor:
-        recent_factor = np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in work["date"].tail(len(recent))])
-        forecast = forecast * np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in future_dates]) / max(float(np.average(recent_factor, weights=weights)), 0.01)
+        historical_factors *= np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in work['date']])
+        future_factors *= np.array([seasonal_month_factor.get(int(d.month), 1.0) for d in future_dates])
+
+    # Fit trend to demand after removing calendar effects. Use a daily slope,
+    # not the total percentage change across an arbitrarily long history.
+    # This prevents a year of slow growth becoming +35% within one month.
+    deseasonalized = pd.Series(values / np.maximum(historical_factors, 0.01))
+    direction, trend_percent = trend(deseasonalized)
+    deseasonalized_recent = deseasonalized.tail(len(recent)).to_numpy()
+    adjusted_base = float(np.average(deseasonalized_recent, weights=weights))
+    recent_trend = deseasonalized.tail(56).to_numpy()
+    slope = 0.0
+    if direction != 'stable' and len(recent_trend) >= 28:
+        slope = float(np.polyfit(np.arange(len(recent_trend)), recent_trend, 1)[0])
+        slope = float(np.clip(slope, -0.25 * adjusted_base / 28, 0.35 * adjusted_base / 28))
+    weighted_age = float(np.average(np.arange(len(recent) - 1, -1, -1), weights=weights))
+    # Forecast prefixes are invariant to requested horizon. Extend a bounded
+    # trend for at most 28 future days, then hold its deseasonalized level.
+    forecast = (adjusted_base + slope * (weighted_age + np.minimum(np.arange(1, horizon + 1), 28))) * future_factors
         
     model = "weighted_moving_average"
     if len(history) >= 180:
