@@ -5,7 +5,7 @@ export function localDate(value = new Date()): string {
 export const MOVEMENT_DRAFT_KEY = 'basqar.movement-draft.v1'
 
 export function readMovementDraft<T>(): Partial<T> {
-  try { return JSON.parse(sessionStorage.getItem(MOVEMENT_DRAFT_KEY) || '{}') as Partial<T> }
+  try { const value = JSON.parse(sessionStorage.getItem(MOVEMENT_DRAFT_KEY) || '{}'); return value && typeof value === 'object' && !Array.isArray(value) ? value as Partial<T> : {} }
   catch { return {} }
 }
 

@@ -1,6 +1,9 @@
 import type { Point, Recommendation, Summary } from './types'
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+export class ApiError extends Error {
+  constructor(message: string, public readonly detail: unknown) { super(message); this.name = 'ApiError' }
+}
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}${path}`, init)
   if (!response.ok) {
@@ -10,7 +13,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       : Array.isArray(detail) ? detail.map(item => item.msg || String(item)).join(' · ')
       : detail && typeof detail === 'object' ? [detail.message, ...(Array.isArray(detail.errors) ? detail.errors : []), ...(Array.isArray(detail.warnings) ? detail.warnings : [])].filter(Boolean).join(' · ')
       : 'Request failed'
-    throw new Error(message || 'Request failed')
+    throw new ApiError(message || 'Request failed', detail)
   }
   return response.json()
 }
@@ -28,6 +31,22 @@ export function exportUrl(format: 'csv' | 'xlsx') { return `${API}/api/orders/ex
 export function editorExportUrl(dataset: EditorDataset, format: 'csv' | 'xlsx') { return `${API}/api/editor/${dataset}/export?format=${format}` }
 export async function uploadFile(dataset: string, file: File) { const form = new FormData(); form.append('file', file); return request<{ rows_loaded: number; errors: string[]; warnings: string[]; recommendations: number; outliers: number }>(`/api/data/upload/${dataset}`, { method: 'POST', body: form }) }
 export async function uploadWorkbook(file: File) { const form = new FormData(); form.append('file', file); return request<{ message: string; datasets: Record<string, number>; recommendations: number; errors: string[]; warnings: string[] }>('/api/data/upload-workbook', { method: 'POST', body: form }) }
+
+export interface PartnerReport {
+  errors: string[]; warnings: string[]
+  files?: Array<{ name: string; kind: string; rows: number }>
+  metrics?: Record<string, number | string | null>
+}
+export interface PartnerImportResult {
+  datasets: Record<string, number>; recommendations: number; outliers: number
+  report: PartnerReport; errors: string[]; warnings: string[]
+}
+export async function uploadPartner(file: File, leadTimeDays: number, asOf = '') {
+  const form = new FormData()
+  form.append('file', file); form.append('lead_time_days', String(leadTimeDays))
+  if (asOf) form.append('as_of', asOf)
+  return request<PartnerImportResult>('/api/data/upload-partner', { method: 'POST', body: form })
+}
 
 export type EditorDataset = 'products' | 'sales' | 'stock' | 'transit' | 'stockouts' | 'suppliers'
 export type EditorRow = Record<string, unknown> & { row_id: number }

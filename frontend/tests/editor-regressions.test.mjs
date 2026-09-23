@@ -92,7 +92,7 @@ test('dashboard navigation, actions and static copy have English and Kazakh tran
   const input = source('i18n.tsx').replace(/^import[^\r\n]*$/gm, '').replace(/^export /gm, '')
   const { code } = await transformWithOxc(input + '\nreturn translateText;', 'i18n.tsx', { jsx: { runtime: 'classic' } })
   const texts = new Set()
-  for (const file of ['App', 'DataEditor', 'DataPages', 'Procurement', 'ItemDetail', 'OrderHistory', 'ui']) {
+  for (const file of ['App', 'DataEditor', 'DataPages', 'Procurement', 'ItemDetail', 'OrderHistory', 'PartnerImport', 'ui']) {
     for (const match of source(file + '.tsx').matchAll(/translateText\(["']([^"']+)["']\)/g)) texts.add(match[1])
   }
   for (const locale of ['en', 'kk']) {
@@ -103,4 +103,41 @@ test('dashboard navigation, actions and static copy have English and Kazakh tran
     }
     assert.ok(!translate('Операция сохранена: {count} позиций. Excel обновлён.', { count: 3 }).includes('{count}'))
   }
+})
+
+test('partner ZIP import requires an explicit lead time and acknowledgement and shares loading state', async () => {
+  const h = harness(), calls = [], busy = []
+  const C = await component('PartnerImport', { ...h.hooks, ApiError: class extends Error {}, uploadPartner: async (...args) => { calls.push(args); return { datasets: { sales: 5 }, recommendations: 3, outliers: 0, errors: [], warnings: [], report: { errors: [], warnings: [], metrics: { products: 2, lead_time_days: args[1] }, files: [] } } } })
+  const render = () => h.render(() => C({ disabled: false, onBusyChange: value => busy.push(value), onRefresh: async () => {} }))
+  let tree = render()
+  const submit = () => nodes(tree, n => n.type === 'form')[0].props.onSubmit({ preventDefault() {} })
+  assert.equal(nodes(tree, n => n.type === 'input' && n.props.type === 'number')[0].props.value, '')
+  await submit(); assert.equal(calls.length, 0)
+  const archive = { name: 'Systeme electric.zip', size: 1000 }
+  nodes(tree, n => n.type === 'input' && n.props.type === 'file')[0].props.onChange({ target: { files: [archive] } }); tree = render()
+  nodes(tree, n => n.type === 'input' && n.props.type === 'number')[0].props.onChange({ target: { value: '5' } }); tree = render()
+  await submit(); assert.equal(calls.length, 0)
+  nodes(tree, n => n.type === 'input' && n.props.type === 'checkbox')[0].props.onChange({ target: { checked: true } }); tree = render()
+  await submit(); tree = render()
+  assert.equal(calls.length, 1)
+  assert.deepEqual(calls[0], [archive, 5, ''])
+  assert.deepEqual(busy, [true, false])
+  assert.equal(nodes(tree, n => n.type === 'input' && n.props.type === 'checkbox')[0].props.checked, false)
+})
+
+test('positive fallback prices flagged unknown are excluded from the confirmed budget', async () => {
+  const h = harness()
+  const env = { ...h.hooks, Badge: () => null, Icon: () => null, number: String, money: value => value == null ? 'Нет цены' : `${value} ₸`, riskLabels: { LOW: 'Плановый' }, statusLabels: { DRAFT: 'Черновик' }, warehouseName: value => value }
+  const C = await component('Procurement', env)
+  const base = { id: '1', sku: 'A', product_name: 'A', warehouse: 'WH', supplier_id: 'S', supplier_name: 'Supplier', category: 'C', current_stock: 0, in_transit: 0, urgency: 'LOW', status: 'DRAFT', final_quantity: 2, recommended_quantity: 2, lead_time_days: 5, days_of_cover: 0, unit_cost: 1000, total_cost_kzt: 2000, metadata: { cost_unknown: true } }
+  let rows = [base]
+  const render = () => h.render(() => C({ rows, summary: { skus_requiring_replenishment: 1, critical_risks: 0, total_budget_kzt: 2000, suppliers_involved: 1, detected_anomalies: 0, estimated_lost_demand: 0, total_recommended_units: 2 }, onOpen() {}, busy: false }))
+  let tree = render()
+  const budget = () => text(nodes(tree, n => n.type === 'article')[2])
+  assert.ok(budget().includes('Цены не заданы'))
+  rows = [base, { ...base, id: '2', sku: 'B', unit_cost: 15, total_cost_kzt: 30, metadata: { cost_unknown: false } }]
+  tree = render()
+  assert.ok(budget().includes('30 ₸'))
+  assert.ok(!budget().includes('2000 ₸'))
+  assert.ok(budget().includes('неполный'))
 })
