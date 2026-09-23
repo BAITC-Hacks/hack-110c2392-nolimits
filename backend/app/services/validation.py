@@ -100,7 +100,7 @@ def normalize_columns(dataset: str, frame: pd.DataFrame) -> pd.DataFrame:
     return frame
 
 
-def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str] | None = None) -> tuple[pd.DataFrame, list[str], list[str]]:
+def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str] | None = None, known_skus: set[str] | None = None) -> tuple[pd.DataFrame, list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     required = REQUIRED_COLUMNS[dataset]
@@ -114,12 +114,13 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
     if frame.duplicated().any():
         warnings.append(f"{dataset}: {int(frame.duplicated().sum())} duplicate row(s) ignored")
         frame = frame.drop_duplicates()
-        
+    invalid_rows = pd.Series(False, index=frame.index)
     for col in [c for c in frame.columns if "date" in c or c.endswith("_date") or c in {"start_date", "end_date"}]:
         parsed = pd.to_datetime(frame[col], errors="coerce")
         bad = int(parsed.isna().sum())
         if bad:
             errors.append(f"{dataset}.{col}: {bad} invalid date value(s)")
+            invalid_rows |= parsed.isna()
         frame[col] = parsed
         
     numeric_cols = {"quantity", "price", "current_stock", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
@@ -128,32 +129,48 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         bad = int(values.isna().sum())
         if bad:
             errors.append(f"{dataset}.{col}: {bad} non-numeric value(s)")
+            invalid_rows |= values.isna()
         frame[col] = values
         
     if "sku" in frame:
         missing_sku = int(frame["sku"].isna().sum() + (frame["sku"].astype(str).str.strip() == "").sum())
         if missing_sku:
             errors.append(f"{dataset}.sku: {missing_sku} missing SKU value(s)")
-            
+            invalid_rows |= frame["sku"].isna() | (frame["sku"].astype(str).str.strip() == "")
+    if "warehouse" in frame:
+        missing_warehouse = int(frame["warehouse"].isna().sum() + (frame["warehouse"].astype(str).str.strip() == "").sum())
+        if missing_warehouse:
+            errors.append(f"{dataset}.warehouse: {missing_warehouse} missing warehouse value(s)")
+            invalid_rows |= frame["warehouse"].isna() | (frame["warehouse"].astype(str).str.strip() == "")
     for col in ["current_stock", "quantity_in_transit", "quantity", "lead_time_days", "moq", "package_size"]:
         if col in frame:
-            negative = int((pd.to_numeric(frame[col], errors="coerce") < 0).sum())
+            values = pd.to_numeric(frame[col], errors="coerce")
+            negative_mask = values < 0
+            negative = int(negative_mask.sum())
             if negative:
                 errors.append(f"{dataset}.{col}: {negative} negative value(s) are not allowed")
-                
-    if dataset == "stock" and known_warehouses:
+                invalid_rows |= negative_mask
+    if dataset != "stock" and known_warehouses and "warehouse" in frame:
         unknown = sorted(set(frame.loc[~frame["warehouse"].isin(known_warehouses), "warehouse"].dropna().astype(str)))
         if unknown:
-            warnings.append(f"{dataset}.warehouse: unknown warehouse(s): {', '.join(unknown)}")
-            
+            errors.append(f"{dataset}.warehouse: unknown warehouse(s): {', '.join(unknown)}")
+            invalid_rows |= ~frame["warehouse"].isin(known_warehouses)
+    if known_skus and dataset in {"stock", "transit", "stockouts", "suppliers"}:
+        unknown_skus = sorted(set(frame.loc[~frame["sku"].astype(str).isin(known_skus), "sku"].dropna().astype(str)))
+        if unknown_skus:
+            warnings.append(f"{dataset}.sku: SKU(s) not present in sales history: {', '.join(unknown_skus[:10])}")
     if dataset == "suppliers":
         invalid = int((pd.to_numeric(frame["lead_time_days"], errors="coerce") <= 0).sum())
         if invalid:
             errors.append(f"suppliers.lead_time_days: {invalid} value(s) must be greater than zero")
-            
-    if errors:
-        frame = frame.dropna(subset=["sku"])
-        
+            invalid_rows |= pd.to_numeric(frame["lead_time_days"], errors="coerce") <= 0
+        duplicate_keys = int(frame.duplicated(subset=["supplier_id", "sku"]).sum())
+        if duplicate_keys:
+            warnings.append(f"suppliers: {duplicate_keys} duplicate supplier/SKU mapping(s) ignored")
+            frame = frame.drop_duplicates(subset=["supplier_id", "sku"])
+    # Keep valid rows so one malformed record does not discard the full upload.
+    if invalid_rows.any():
+        frame = frame.loc[~invalid_rows].copy()
     return frame, errors, warnings
 
 

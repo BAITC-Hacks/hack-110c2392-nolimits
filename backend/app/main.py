@@ -87,7 +87,8 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not read {file.filename}: {exc}') from exc
     known = set(state.datasets['stock'].get('warehouse', pd.Series(dtype=str)).dropna().astype(str))
-    cleaned, errors, warnings = validate_table(dataset, frame, known)
+    known_skus = set(state.datasets['sales'].get('sku', pd.Series(dtype=str)).dropna().astype(str))
+    cleaned, errors, warnings = validate_table(dataset, frame, known, known_skus)
     if len(cleaned):
         state.datasets[dataset] = cleaned
         state.recommendations = []
