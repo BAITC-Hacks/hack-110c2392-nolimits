@@ -70,3 +70,33 @@ def test_stockout_zeroes_are_replaced_with_lost_demand():
 def test_calculation_payload_is_json_safe():
     payload = _json_safe({'units': np.int64(4), 'nested': [np.float64(2.5)]})
     assert payload == {'units': 4, 'nested': [2.5]}
+
+
+def test_russian_column_alias_normalization():
+    from app.services.validation import validate_table
+    df_ru = pd.DataFrame({
+        'Дата_продажи': ['2026-01-01', '2026-01-02'],
+        'Артикул': ['EKT-001', 'EKT-001'],
+        'Наименование_товара': ['Кабель ВВГ', 'Кабель ВВГ'],
+        'Количество': [100, 150],
+        'Цена_за_ед_KZT': [500, 500],
+        'ID_Клиента': ['CLNT-01', 'CLNT-02'],
+        'Склад_отгрузки': ['Склад Астана', 'Склад Астана'],
+        'Категория': ['Кабель', 'Кабель']
+    })
+    cleaned, errors, warnings = validate_table('sales', df_ru)
+    assert len(errors) == 0
+    assert 'sku' in cleaned.columns
+    assert 'quantity' in cleaned.columns
+    assert 'warehouse' in cleaned.columns
+
+
+def test_budget_kzt_calculation():
+    import pytest
+    data = make_data(stock=0)
+    data['suppliers'].loc[0, 'unit_cost'] = 1500.0
+    rows, _ = calculate_recommendations(data)
+    row = rows[0]
+    assert row['unit_cost'] == 1500.0
+    assert row['total_cost_kzt'] == pytest.approx(row['recommended_quantity'] * 1500.0)
+    assert 'KZT' in row['explanation']

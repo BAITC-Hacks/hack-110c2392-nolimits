@@ -11,7 +11,7 @@ from fastapi.responses import StreamingResponse
 from .schemas import AdjustOrderRequest, CalculateRequest
 from .services.demo import build_demo_data
 from .services.replenishment import calculate_recommendations
-from .services.validation import read_table, validate_table
+from .services.validation import parse_workbook, read_table, validate_table
 from .repositories.database import init_db, save_recommendations, update_order
 
 
@@ -27,6 +27,22 @@ class AppState:
         self.recommendations = []
         self.outliers = []
         return {key: len(value) for key, value in self.datasets.items()}
+
+    def load_ekt(self) -> dict[str, int]:
+        from pathlib import Path
+        data_paths = [
+            Path(__file__).parent.parent / "data" / "ekt_sales_and_stock_history.xlsx",
+            Path("c:/Users/олд/Desktop/Alema/data/ekt_sales_and_stock_history.xlsx"),
+            Path("c:/Users/олд/Desktop/HackAlem/data/ekt_sales_and_stock_history.xlsx"),
+        ]
+        for p in data_paths:
+            if p.exists():
+                with open(p, "rb") as f:
+                    self.datasets = parse_workbook(f.read())
+                    self.recommendations = []
+                    self.outliers = []
+                    return {key: len(value) for key, value in self.datasets.items()}
+        return {}
 
 
 state = AppState()
@@ -77,6 +93,34 @@ async def upload(dataset: str, file: UploadFile = File(...)) -> dict:
         state.recommendations = []
         state.outliers = []
     return {'dataset': dataset, 'rows_loaded': len(cleaned), 'errors': errors, 'warnings': warnings}
+
+
+@app.post('/api/data/load-ekt')
+def load_ekt() -> dict:
+    counts = state.load_ekt()
+    if not counts:
+        raise HTTPException(status_code=404, detail='ekt.kz dataset file not found')
+    recs, outliers = calculate_recommendations(state.datasets)
+    state.recommendations = recs
+    state.outliers = outliers
+    save_recommendations(recs)
+    return {'message': 'Real ekt.kz dataset loaded and calculated', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
+
+
+@app.post('/api/data/upload-workbook')
+async def upload_workbook(file: UploadFile = File(...)) -> dict:
+    try:
+        raw = await file.read()
+        datasets = parse_workbook(raw)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
+    state.datasets = datasets
+    recs, outliers = calculate_recommendations(state.datasets)
+    state.recommendations = recs
+    state.outliers = outliers
+    save_recommendations(recs)
+    counts = {key: len(value) for key, value in state.datasets.items()}
+    return {'message': f'Workbook {file.filename} loaded successfully', 'datasets': counts, 'recommendations': len(recs), 'outliers': len(outliers)}
 
 
 @app.post('/api/recommendations/calculate')
@@ -178,7 +222,23 @@ def approve_order(order_id: str) -> dict:
 
 @app.get('/api/orders/export')
 def export_orders(format: str = 'csv') -> StreamingResponse:
-    columns = {'SKU': 'sku', 'Product': 'product_name', 'Supplier': 'supplier_name', 'Warehouse': 'warehouse', 'Recommended Quantity': 'final_quantity', 'Urgency': 'urgency', 'Current Stock': 'current_stock', 'Goods In Transit': 'in_transit', 'Forecast': 'forecast_lead_time', 'Safety Stock': 'safety_stock', 'Lead Time': 'lead_time_days', 'Explanation': 'explanation', 'Status': 'status'}
+    columns = {
+        'SKU': 'sku',
+        'Product': 'product_name',
+        'Supplier': 'supplier_name',
+        'Warehouse': 'warehouse',
+        'Recommended Quantity': 'final_quantity',
+        'Unit Cost (KZT)': 'unit_cost',
+        'Total Cost (KZT)': 'total_cost_kzt',
+        'Urgency': 'urgency',
+        'Current Stock': 'current_stock',
+        'Goods In Transit': 'in_transit',
+        'Forecast': 'forecast_lead_time',
+        'Safety Stock': 'safety_stock',
+        'Lead Time': 'lead_time_days',
+        'Explanation': 'explanation',
+        'Status': 'status'
+    }
     frame = pd.DataFrame([{label: row.get(key) for label, key in columns.items()} for row in state.recommendations])
     if format.lower() == 'xlsx':
         buffer = io.BytesIO()
@@ -190,7 +250,15 @@ def export_orders(format: str = 'csv') -> StreamingResponse:
 
 
 def _summary(rows: list[dict]) -> dict:
-    return {'skus_requiring_replenishment': sum(item['recommended_quantity'] > 0 for item in rows), 'critical_risks': sum(item['urgency'] == 'CRITICAL' for item in rows), 'total_recommended_units': round(sum(item['recommended_quantity'] for item in rows), 1), 'suppliers_involved': len({item['supplier_id'] for item in rows}), 'detected_anomalies': sum(item['outliers_removed'] for item in rows), 'estimated_lost_demand': round(sum(item['estimated_lost_demand'] for item in rows), 1)}
+    return {
+        'skus_requiring_replenishment': sum(item['recommended_quantity'] > 0 for item in rows),
+        'critical_risks': sum(item['urgency'] == 'CRITICAL' for item in rows),
+        'total_recommended_units': round(sum(item['recommended_quantity'] for item in rows), 1),
+        'total_budget_kzt': round(sum(item.get('total_cost_kzt', 0) for item in rows), 2),
+        'suppliers_involved': len({item['supplier_id'] for item in rows}),
+        'detected_anomalies': sum(item['outliers_removed'] for item in rows),
+        'estimated_lost_demand': round(sum(item['estimated_lost_demand'] for item in rows), 1)
+    }
 
 
 def _json_safe(value):

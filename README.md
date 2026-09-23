@@ -1,22 +1,36 @@
-# StockPilot — explainable warehouse replenishment
+# StockPilot — Explainable Warehouse Replenishment OS
 
-Hackathon-ready MVP for purchasing managers. StockPilot combines sales history, inventory, inbound goods, supplier lead times and stockout windows to answer one question: **what should we order right now, and why?**
+Система автоматического и объяснимого расчёта заказов поставщикам для пополнения распределительных складов дистрибьютора электротехники **ТОО «Электрокомплект» (ekt.kz)**.
 
-## Run locally
+StockPilot объединяет историю продаж, текущие остатки, товары в пути, логистические сроки (Lead Time), минимальные партии (MOQ), кванты упаковки и периоды дефицита (stockouts) для ответа на ключевой вопрос закупщика: **что, сколько и почему нужно заказать прямо сейчас?**
 
-### Backend
+---
+
+## ⚡️ Быстрый запуск в 1 команду (Docker)
+
+```bash
+docker compose up --build
+```
+
+- **Frontend Dashboard:** [http://localhost:5173](http://localhost:5173)
+- **Backend Swagger API:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Health Check:** [http://localhost:8000/health](http://localhost:8000/health)
+
+---
+
+## 🛠 Локальный запуск для разработки
+
+### 1. Backend (FastAPI + Python 3.12/3.13)
 
 ```powershell
 cd backend
-py -m venv .venv
+python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-The API and Swagger UI are available at `http://localhost:8000/docs`.
-
-### Frontend
+### 2. Frontend (React + Vite + TypeScript)
 
 ```powershell
 cd frontend
@@ -24,31 +38,78 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`. The backend starts with a deterministic demo dataset; use **Run demo scenario** to regenerate and calculate it.
+Откройте [http://localhost:5173](http://localhost:5173). В приложении доступны:
+1. Кнопка **«⚡️ ekt.kz Dataset (Казахстан)»** — мгновенная загрузка реального датасета ТОО «Электрокомплект» с расчётом заказов и бюджета в тенге (₸).
+2. Кнопка **«↻ Synthetic demo»** — синтетический эталонный сценарий (105 SKU, 3 склада, 5 поставщиков).
+3. Раздел **«Data Intake»** — загрузка файлов по отдельности или книги Excel целиком (`ekt_sales_and_stock_history.xlsx`, 5 листов в 1 клик).
 
-## What is implemented
+---
 
-- CSV/XLSX import with required-column, date, numeric, duplicate, missing-SKU and constraint validation.
-- Deterministic demo dataset: 105 SKUs, 3 warehouses, 5 suppliers, 15 months of history, seasonal/growing/declining/stable demand, stockouts, inbound goods and a deliberate one-off order.
-- Robust MAD outlier detection preserves raw transactions and produces adjusted quantities and an audit trail.
-- Stockout correction estimates lost demand from comparable non-stockout demand instead of treating stockout zeros as a decline.
-- Forecast engine uses weighted recent demand, detects weekday seasonality with a minimum history threshold and applies a sustained trend signal.
-- Replenishment formula: `target = forecast during lead time + service factor × demand std × √lead time`; `order = max(0, target − stock − inbound)`, then MOQ and package rounding.
-- Deterministic explanations, audit metadata, urgency, days of cover and supplier grouping data.
-- SQLite/SQLAlchemy audit repository stores calculation metadata plus draft/adjusted/approved order state.
-- Dashboard with KPI cards, filters, sorting, demand chart, calculation trace, outlier audit page, drag-and-drop imports, CSV/XLSX export and explicit draft/adjust/approve workflow.
-- Dashboard filters cover warehouse, supplier, category, urgency and search; supplier order packets summarize the review queue, while SKU charts mark forecast, stockout windows and anomalies.
-- Orders are never sent to suppliers automatically. Approval is an internal state change only.
+## 📐 Архитектура и математический аппарат
 
-## Tests
+StockPilot строго следует пяти ключевым критериям Must Have ТЗ хакатона:
+
+### 1. Формула расчёта потребности
+$$\text{Demand during Lead Time} = \text{Lead Time (days)} \times \text{Average Daily Demand} \times \text{Seasonality} \times (1 + \text{Trend})$$
+$$\text{Safety Stock} = Z \times \sigma_{\text{daily}} \times \sqrt{\text{Lead Time}} \quad (Z = 1.65 \text{ для 95\% уровня сервиса})$$
+$$\text{Net Requirement} = \max(0, \text{Demand during Lead Time} + \text{Safety Stock} - \text{Current Stock} - \text{Goods In Transit})$$
+
+### 2. Учёт ограничений поставщиков (MOQ и квант упаковки)
+- Если $\text{Net Requirement} > 0$ и задан $\text{MOQ}$: $\text{Order} = \max(\text{Net Requirement}, \text{MOQ})$.
+- Если задана кратность упаковки/бухты ($\text{Package Size} > 1$): $\text{Order} = \lceil \frac{\text{Order}}{\text{Package Size}} \rceil \times \text{Package Size}$.
+
+### 3. Фильтрация разовых выбросов (Robust MAD)
+Алгоритм использует медианное абсолютное отклонение (Median Absolute Deviation, MAD) вместо чувствительного к выбросам стандартного отклонения:
+$$\text{MAD} = \text{median}(|x_i - \text{median}(X)|), \quad \text{Modified Z} = 0.6745 \times \frac{x_i - \text{median}(X)}{\text{MAD}}$$
+Разовые гигантские оптовые партии (например, заказ на 4800 м от `CLNT-VIP-BIG-PROJECT`) исключаются из прогнозирования регулярного спроса, но сохраняются в журнале аномалий (**Audit Trail**) без потери данных.
+
+### 4. Реконструкция упущенного спроса (Stockout Compensation)
+Периоды обнуления остатков (дефицит товара) не снижают прогноз. Система сопоставляет даты дефицита и восстанавливает упущенный объём продаж на основе спроса в смежные обеспеченные периоды.
+
+### 5. Сезонность и тренд
+- Выявление внутринедельной и помесячной сезонности (например, пик светотехники +65% в зимние месяцы и строительный пик кабельной продукции летом).
+- Оценка долгосрочного тренда спроса (MoM / YoY).
+
+### 6. Учёт товаров в пути (In-Transit) и бюджета (KZT)
+- Все размещённые на заводах заказы в пути вычитаются из текущей потребности.
+- Для каждой строки и поставщика рассчитывается общая сумма закупки в казахстанских тенге (**₸ KZT**).
+
+---
+
+## 🧪 Тестирование
+
+Комплексный набор автоматических тестов проверяет математику и валидацию:
 
 ```powershell
 cd backend
-py -m pytest
+pytest
 ```
 
-Tests cover the monotonic impact of current stock and inbound goods, robust outlier handling, non-negative recommendations, package rounding and stockout lost-demand correction.
+**Покрытие тестов (`tests/test_replenishment.py`):**
+1. Влияние текущих остатков на снижение объёма закупки.
+2. Корректное вычитание товаров в пути (In-Transit).
+3. Изоляция выбросов с сохранением в реестре аудита.
+4. Гарантия неотрицательности рекомендаций.
+5. Соблюдение квантов упаковки и минимальной партии (MOQ).
+6. Восстановление упущенного спроса при дефиците.
+7. Нормализация русскоязычных заголовков партнёра (Артикул, Количество, Склад и т.д.).
+8. Корректный расчёт бюджета в KZT.
 
-## API overview
+---
 
-`GET /health`, `POST /api/data/demo`, `POST /api/data/upload/{dataset}`, `POST /api/recommendations/calculate`, `GET /api/recommendations`, `GET /api/analytics/{sku}`, `GET /api/outliers`, `POST /api/orders/{id}/adjust`, `POST /api/orders/{id}/approve`, and `GET /api/orders/export?format=csv|xlsx`.
+## 🔌 API Endpoints
+
+| Метод | Путь | Описание |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Проверка жизнеспособности сервиса |
+| `POST` | `/api/data/load-ekt` | Загрузка и расчёт реального датасета ТОО «Электрокомплект» |
+| `POST` | `/api/data/upload-workbook` | Загрузка единой 5-листовой книги Excel (.xlsx) |
+| `POST` | `/api/data/upload/{dataset}` | Загрузка отдельного датасета (sales, stock, transit, suppliers, stockouts) |
+| `POST` | `/api/data/demo` | Загрузка синтетического сценария |
+| `POST` | `/api/recommendations/calculate` | Перерасчёт с настраиваемыми параметрами (Z, threshold, safety days) |
+| `GET` | `/api/recommendations` | Получение списка рекомендаций с фильтрами |
+| `GET` | `/api/analytics/{sku}` | Детализированные точки спроса, прогноз и дефицит для графика |
+| `GET` | `/api/outliers` | Реестр выявленных аномалий и выбросов |
+| `POST` | `/api/orders/{id}/adjust` | Ручная корректировка количества закупщиком |
+| `POST` | `/api/orders/{id}/approve` | Утверждение заказа в производство/закупку |
+| `GET` | `/api/orders/export` | Экспорт итогового плана закупок в Excel / CSV |
