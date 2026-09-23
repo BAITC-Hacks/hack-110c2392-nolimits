@@ -38,7 +38,7 @@ COLUMN_ALIASES: dict[str, dict[str, list[str]]] = {
     "stock": {
         "sku": ["sku", "артикул", "код", "код_товара"],
         "warehouse": ["warehouse", "склад", "склад_хранения"],
-        "current_stock": ["current_stock", "доступный_остаток", "физический_остаток", "остаток", "текущий_остаток", "stock", "qty_on_hand"],
+        "current_stock": ["current_stock", "доступный_остаток", "остаток", "текущий_остаток", "stock", "qty_on_hand"],
         "physical_stock": ["physical_stock", "физический_остаток", "факт_остаток"],
         "reserved": ["reserved", "зарезервировано", "резерв"],
     },
@@ -93,15 +93,12 @@ def normalize_columns(dataset: str, frame: pd.DataFrame) -> pd.DataFrame:
         
     frame.columns = [str(c).strip().lower() for c in frame.columns]
     
-    # Specific logic for stock when physical and reserved are present
-    if dataset == "stock":
-        if "current_stock" not in frame.columns:
-            if "доступный_остаток" in frame.columns:
-                frame["current_stock"] = frame["доступный_остаток"]
-            elif "физический_остаток" in frame.columns:
-                physical = pd.to_numeric(frame["физический_остаток"], errors="coerce").fillna(0)
-                reserved = pd.to_numeric(frame.get("зарезервировано", 0), errors="coerce").fillna(0)
-                frame["current_stock"] = (physical - reserved).clip(lower=0)
+    # Aliases have already been normalized. An explicit available balance wins;
+    # otherwise derive it from physical stock, preserving invalid values for validation.
+    if dataset == "stock" and "current_stock" not in frame and "physical_stock" in frame:
+        physical = pd.to_numeric(frame["physical_stock"], errors="coerce")
+        reserved = pd.to_numeric(frame["reserved"], errors="coerce") if "reserved" in frame else 0
+        frame["current_stock"] = (physical - reserved).clip(lower=0)
                 
     # Specific fallback for supplier_id if only supplier_name is present
     if dataset == "suppliers":
@@ -126,15 +123,24 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         warnings.append(f"{dataset}: {int(frame.duplicated().sum())} duplicate row(s) ignored")
         frame = frame.drop_duplicates()
     invalid_rows = pd.Series(False, index=frame.index)
-    for col in [c for c in frame.columns if "date" in c or c.endswith("_date") or c in {"start_date", "end_date"}]:
+    date_columns = {"date", "expected_arrival_date", "start_date", "end_date", "as_of", "snapshot_date", "balance_date"}
+    for col in date_columns.intersection(frame.columns):
         parsed = pd.to_datetime(frame[col], errors="coerce")
-        bad = int(parsed.isna().sum())
+        bad_mask = parsed.isna()
+        if dataset == "transit" and col == "expected_arrival_date" and "arrival_date_unknown" in frame:
+            explicitly_unknown = frame["arrival_date_unknown"].astype(str).str.lower().isin(["true", "1"])
+            missing_date = frame[col].isna() | frame[col].astype(str).str.strip().eq("")
+            unknown = explicitly_unknown & missing_date
+            bad_mask &= ~unknown
+            if unknown.any():
+                warnings.append(f"transit: {int(unknown.sum())} arrival date(s) unknown; excluded from timely replenishment coverage")
+        bad = int(bad_mask.sum())
         if bad:
             errors.append(f"{dataset}.{col}: {bad} invalid date value(s)")
-            invalid_rows |= parsed.isna()
+            invalid_rows |= bad_mask
         frame[col] = parsed
         
-    numeric_cols = {"quantity", "price", "unit_price", "current_stock", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
+    numeric_cols = {"quantity", "price", "unit_price", "current_stock", "physical_stock", "reserved", "quantity_in_transit", "lead_time_days", "moq", "package_size", "unit_cost", "minimum_order_value"}
     for col in numeric_cols.intersection(frame.columns):
         values = pd.to_numeric(frame[col], errors="coerce")
         bad_mask = ~np.isfinite(values)
@@ -154,7 +160,7 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
         if missing_warehouse:
             errors.append(f"{dataset}.warehouse: {missing_warehouse} missing warehouse value(s)")
             invalid_rows |= frame["warehouse"].isna() | (frame["warehouse"].astype(str).str.strip() == "")
-    for col in ["current_stock", "quantity_in_transit", "quantity", "unit_price", "lead_time_days", "moq", "package_size"]:
+    for col in numeric_cols:
         if col in frame:
             values = pd.to_numeric(frame[col], errors="coerce")
             negative_mask = values < 0
@@ -205,68 +211,68 @@ def validate_table(dataset: str, frame: pd.DataFrame, known_warehouses: set[str]
 
 
 def parse_workbook(raw: bytes, include_report: bool = False) -> dict[str, pd.DataFrame] | tuple[dict[str, pd.DataFrame], list[str], list[str]]:
+    """Read normalized workbooks, including every dataset of our own export.
+
+    Explicit transit sheets take precedence over embedded stock/inbound columns.
+    Unknown dates stay unknown; importing a file must never invent a delivery.
     """
-    Parses a multi-sheet Excel workbook (such as ekt_sales_and_stock_history.xlsx).
-    Automatically maps known sheet names to standard datasets and extracts:
-    - sales
-    - stock
-    - transit
-    - suppliers
-    - stockouts
-    """
-    excel_file = pd.ExcelFile(BytesIO(raw))
-    sheet_names = excel_file.sheet_names
-    
-    datasets: dict[str, pd.DataFrame] = {}
     errors: list[str] = []
     warnings: list[str] = []
-    
-    # Mapping sheet names
-    for sheet in sheet_names:
-        sheet_lower = sheet.lower()
-        if "продаж" in sheet_lower or "sale" in sheet_lower:
-            df = excel_file.parse(sheet)
-            cleaned, sheet_errors, sheet_warnings = validate_table("sales", df)
-            datasets["sales"] = cleaned
-            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
-            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
-        elif "дефицит" in sheet_lower or "stockout" in sheet_lower:
-            df = excel_file.parse(sheet)
-            cleaned, sheet_errors, sheet_warnings = validate_table("stockouts", df)
-            datasets["stockouts"] = cleaned
-            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
-            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
-        elif "поставщик" in sheet_lower or "supplier" in sheet_lower:
-            df = excel_file.parse(sheet)
-            cleaned, sheet_errors, sheet_warnings = validate_table("suppliers", df)
-            datasets["suppliers"] = cleaned
-            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
-            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
-        elif "остатк" in sheet_lower or "stock" in sheet_lower or "пути" in sheet_lower:
-            df = excel_file.parse(sheet)
-            # This sheet usually contains both stock and transit columns
-            cleaned_stock, sheet_errors, sheet_warnings = validate_table("stock", df)
-            datasets["stock"] = cleaned_stock
-            errors.extend(f"{sheet}: {message}" for message in sheet_errors)
-            warnings.extend(f"{sheet}: {message}" for message in sheet_warnings)
-            
-            # Extract transit if present in this sheet
-            df_norm = normalize_columns("transit", df)
-            if "quantity_in_transit" in df_norm.columns:
-                transit_df = df_norm[pd.to_numeric(df_norm["quantity_in_transit"], errors="coerce") > 0].copy()
-                if not transit_df.empty:
-                    if "expected_arrival_date" not in transit_df.columns:
-                        transit_df["expected_arrival_date"] = pd.Timestamp.now() + pd.Timedelta(days=7)
-                    cleaned_transit, transit_errors, transit_warnings = validate_table("transit", transit_df)
-                    datasets["transit"] = cleaned_transit
-                    errors.extend(f"{sheet}: {message}" for message in transit_errors)
-                    warnings.extend(f"{sheet}: {message}" for message in transit_warnings)
-                    
-    # Fill any missing empty DataFrames
-    for key in ["sales", "stock", "transit", "stockouts", "suppliers"]:
-        if key not in datasets:
-            datasets[key] = pd.DataFrame()
-            
+    parts: dict[str, list[pd.DataFrame]] = {key: [] for key in REQUIRED_COLUMNS}
+    embedded_transit: list[pd.DataFrame] = []
+
+    def kind(name: str) -> str | None:
+        name = name.strip().lower()
+        if name in REQUIRED_COLUMNS:
+            return name
+        for key, fragments in (
+            ("stockouts", ("дефицит", "stockout")),
+            ("transit", ("transit", "пути", "inbound")),
+            ("suppliers", ("поставщик", "supplier")),
+            ("sales", ("продаж", "sale")),
+            ("products", ("product", "каталог", "номенклатур")),
+            ("stock", ("остатк", "stock")),
+        ):
+            if any(fragment in name for fragment in fragments):
+                return key
+        return None
+
+    with pd.ExcelFile(BytesIO(raw)) as workbook:
+        for sheet in workbook.sheet_names:
+            dataset = kind(sheet)
+            if dataset is None:
+                if sheet.lower() == "movements":
+                    warnings.append("movements: journal is informational; importing balances does not replay warehouse operations")
+                else:
+                    warnings.append(f"{sheet}: unrecognized sheet; use a normalized template or the partner archive importer")
+                continue
+            frame = workbook.parse(sheet)
+            if frame.empty and not len(frame.columns):
+                continue
+            parts[dataset].append(frame)
+            if dataset == "stock":
+                transit = normalize_columns("transit", frame)
+                if "quantity_in_transit" in transit:
+                    transit = transit.loc[pd.to_numeric(transit["quantity_in_transit"], errors="coerce").fillna(0) > 0].copy()
+                    if not transit.empty:
+                        if "expected_arrival_date" not in transit:
+                            transit["expected_arrival_date"] = pd.NaT
+                        missing = transit["expected_arrival_date"].isna() | transit["expected_arrival_date"].astype(str).str.strip().eq("")
+                        transit["arrival_date_unknown"] = missing
+                        embedded_transit.append(transit)
+    if not parts["transit"]:
+        parts["transit"] = embedded_transit
+
+    datasets: dict[str, pd.DataFrame] = {}
+    for dataset, frames in parts.items():
+        if not frames:
+            datasets[dataset] = pd.DataFrame(columns=sorted(REQUIRED_COLUMNS[dataset]))
+            continue
+        normalized = pd.concat([normalize_columns(dataset, frame) for frame in frames], ignore_index=True)
+        cleaned, table_errors, table_warnings = validate_table(dataset, normalized)
+        datasets[dataset] = cleaned
+        errors.extend(table_errors)
+        warnings.extend(table_warnings)
     if include_report:
         return datasets, errors, warnings
     return datasets
