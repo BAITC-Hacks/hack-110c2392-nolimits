@@ -9,12 +9,12 @@ class CalculateRequest(BaseModel):
     warehouse: str | None = None
     category: str | None = None
     safety_days: int = Field(default=7, ge=0, le=90)
-    service_factor: float = Field(default=1.65, ge=0, le=4)
-    outlier_threshold: float = Field(default=3.5, ge=1, le=10)
+    service_factor: float = Field(default=1.65, ge=0, le=4, allow_inf_nan=False)
+    outlier_threshold: float = Field(default=3.5, ge=1, le=10, allow_inf_nan=False)
 
 
 class AdjustOrderRequest(BaseModel):
-    final_quantity: float = Field(ge=0)
+    final_quantity: float = Field(ge=0, allow_inf_nan=False)
 
 
 class UploadResponse(BaseModel):

@@ -13,7 +13,7 @@ from .services.demo import build_demo_data
 from .services.replenishment import calculate_recommendations, prepare_demand
 from .services.forecasting import forecast_series
 from .services.validation import parse_workbook, read_table, validate_table
-from .repositories.database import init_db, save_recommendations, update_order
+from .repositories.database import init_db, read_order_history, save_recommendations, update_order
 
 
 class AppState:
@@ -27,6 +27,7 @@ class AppState:
         self.datasets = build_demo_data()
         self.recommendations = []
         self.outliers = []
+        self.last_calculation = {}
         return {key: len(value) for key, value in self.datasets.items()}
 
     def load_ekt(self) -> dict[str, int]:
@@ -42,6 +43,7 @@ class AppState:
                     self.datasets = parse_workbook(f.read())
                     self.recommendations = []
                     self.outliers = []
+                    self.last_calculation = {}
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
@@ -59,6 +61,7 @@ class AppState:
                     self.datasets = parse_workbook(f.read())
                     self.recommendations = []
                     self.outliers = []
+                    self.last_calculation = {}
                     return {key: len(value) for key, value in self.datasets.items()}
         return {}
 
@@ -150,6 +153,7 @@ async def upload_workbook(file: UploadFile = File(...)) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f'Could not parse Excel workbook {file.filename}: {exc}') from exc
     state.datasets = datasets
+    state.last_calculation = {}
     recs, outliers = calculate_recommendations(state.datasets)
     state.recommendations = recs
     state.outliers = outliers
@@ -232,6 +236,11 @@ def adjust_order(order_id: str, request: AdjustOrderRequest) -> dict:
     row['status'] = 'ADJUSTED'
     update_order(order_id, status='ADJUSTED', final_quantity=request.final_quantity)
     return row
+
+
+@app.get('/api/orders/history')
+def order_history() -> dict:
+    return {'orders': read_order_history()}
 
 
 @app.post('/api/orders/{order_id}/approve')

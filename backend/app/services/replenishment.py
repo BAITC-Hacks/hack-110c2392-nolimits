@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import numpy as np
@@ -104,6 +105,11 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
     daily, outlier_rows = prepare_demand(data, warehouse, category, outlier_threshold)
     if daily.empty:
         return [], []
+    source = hashlib.sha256()
+    for name in ('sales', 'stock', 'transit', 'stockouts', 'suppliers'):
+        source.update(name.encode())
+        source.update(data.get(name, pd.DataFrame()).to_csv(index=False).encode('utf-8'))
+    dataset_signature = source.hexdigest()
     stock = data.get('stock', pd.DataFrame()).copy()
     transit = data.get('transit', pd.DataFrame()).copy()
     if not stock.empty:
@@ -159,7 +165,7 @@ def calculate_recommendations(data: dict[str, pd.DataFrame], warehouse: str | No
         relevant_outliers = [item for item in outlier_rows if item['sku'] == sku and item['warehouse'] == wh]
         outlier_count = len(relevant_outliers)
         explanation = _explanation(recommended, lead, forecast_lead, current, incoming, safety, details, outlier_count, lost, moq, package, unit_cost, total_cost_kzt)
-        metadata = {'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'outliers_removed': relevant_outliers, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
+        metadata = {'dataset_signature': dataset_signature, 'forecast_model': details['model'], 'forecast_horizon_days': lead + safety_days, 'demand_std': round(demand_std, 2), 'service_factor': service_factor, 'raw_order': round(raw_order, 2), 'rounded_order': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'outliers_removed': relevant_outliers, 'stockout_adjustments': [{'estimated_lost_demand': round(lost, 2)}] if lost else []}
         recommendations.append({'id': f'{sku}:{wh}', 'sku': sku, 'product_name': group['product_name'].iloc[0], 'warehouse': wh, 'category': group['category'].iloc[0], 'supplier_id': str(supplier.get('supplier_id', 'UNASSIGNED')), 'supplier_name': str(supplier.get('supplier_name', 'Unassigned supplier')), 'current_stock': round(current, 2), 'in_transit': round(incoming, 2), 'average_daily_demand': round(avg, 2), 'forecast_lead_time': round(forecast_lead, 2), 'safety_stock': round(safety, 2), 'inventory_position': round(inventory_position, 2), 'raw_recommended_quantity': round(raw_order, 2), 'recommended_quantity': round(recommended, 2), 'final_quantity': round(recommended, 2), 'unit_cost': round(unit_cost, 2), 'total_cost_kzt': round(total_cost_kzt, 2), 'lead_time_days': lead, 'days_of_cover': round(days_cover, 1), 'urgency': urgency, 'trend_direction': details['trend_direction'], 'trend_percent': details['trend_percent'], 'seasonality_detected': details['seasonality_detected'], 'outliers_removed': outlier_count, 'estimated_lost_demand': round(lost, 2), 'status': 'DRAFT', 'explanation': explanation, 'metadata': metadata})
     return recommendations, outlier_rows
 

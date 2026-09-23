@@ -68,6 +68,18 @@ def test_A07_restart_restores_approved_decision(api_factory):
         assert (row["status"], row["final_quantity"]) == ("APPROVED", 36), row
 
 
+def test_new_dataset_does_not_inherit_stale_approval(client):
+    from app import main
+
+    row = first_order(client)
+    assert client.post(path(row, 'approve')).status_code == 200
+    main.state.datasets['stock'].loc[0, 'current_stock'] += 1
+    assert client.post('/api/recommendations/calculate', json={}).status_code == 200
+    assert first_order(client)['status'] == 'DRAFT'
+    history = client.get('/api/orders/history').json()['orders']
+    assert any(entry['order_id'] == row['id'] and entry['status'] == 'APPROVED' for entry in history)
+
+
 @pytest.mark.parametrize("quantity", [-1, 1, 25, 24.5])
 def test_A08_final_order_constraints_are_enforced(client, quantity):
     row = first_order(client)
