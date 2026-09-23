@@ -96,6 +96,9 @@ p,td,th,dd,dt,small,strong,span,h1,h2,h3,button,a{overflow-wrap:anywhere}
   font-size:12px;
   padding:16px 12px 0}
 .sidebar-bottom small{color:#A7B8AB}
+.sidebar .sidebar-collapse{margin-top:12px;border-top:1px solid #3A4B40;border-radius:0;flex-shrink:0}
+.sidebar-collapsed .sidebar .sidebar-collapse{margin-top:auto}
+@media(max-width:1200px){.sidebar .sidebar-collapse{margin-top:auto}}
 .main{padding:32px;
   max-width:100%}
 .topbar{display:flex;
